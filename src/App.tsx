@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { 
   Ticket, ShieldCheck, QrCode, BarChart3, ChevronRight, 
-  Sparkles, Layers, MapPin, LogOut, Lock, X, Mail, AlertCircle
+  Sparkles, Layers, MapPin, LogOut, Lock, X, Mail, AlertCircle, CheckCircle2
 } from 'lucide-react';
 
 type UserRole = 'guest' | 'admin' | 'scanner';
@@ -15,7 +15,7 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
 
-  // Interceptor de Auth para los módulos
+  // Interceptor de Navegación por Roles
   const handleModuleClick = (targetModule: 'b2c' | 'admin' | 'scanner') => {
     if (targetModule === 'b2c') {
       setActiveTab('b2c');
@@ -29,7 +29,7 @@ export default function App() {
     }
   };
 
-  // Autenticación de credenciales
+  // Manejo de Formulario de Inicio de Sesión
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
@@ -43,7 +43,7 @@ export default function App() {
       setIsLoginOpen(false);
       if (pendingModule) setActiveTab(pendingModule);
     } else {
-      setLoginError('Credenciales incorrectas. Usa los botones de prueba rápida.');
+      setLoginError('Credenciales incorrectas. Usa los accesos rápidos de prueba.');
     }
   };
 
@@ -61,7 +61,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-black text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
       
-      {/* Dynamic Glass Header */}
+      {/* Header Glass estilo Apple */}
       <header className="sticky top-0 z-50 backdrop-blur-2xl bg-black/50 border-b border-white/10 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab('landing')}>
           <div className="h-10 w-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/30">
@@ -75,7 +75,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Navegación y Sesión */}
+        {/* Módulos de Navegación */}
         <div className="flex items-center gap-3">
           <nav className="flex items-center gap-1.5 bg-white/5 p-1.5 rounded-full border border-white/10 backdrop-blur-lg">
             <button
@@ -110,7 +110,7 @@ export default function App() {
               className="p-2 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-all text-xs font-medium flex items-center gap-1.5 px-3"
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span>Salir ({userRole})</span>
+              <span>Salir</span>
             </button>
           )}
         </div>
@@ -119,9 +119,9 @@ export default function App() {
       {/* ÁREA PRINCIPAL DINÁMICA */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-8 flex flex-col justify-center">
 
-        {/* 1. LANDING PAGE INICIAL */}
+        {/* 1. LANDING PAGE PRINCIPAL */}
         {activeTab === 'landing' && (
-          <div className="flex flex-col items-center text-center py-12 animate-fadeIn">
+          <div className="flex flex-col items-center text-center py-12">
             <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-medium mb-6">
               <Sparkles className="w-3.5 h-3.5" />
               Plataforma White-Label Enterprise Operativa
@@ -180,9 +180,9 @@ export default function App() {
           </div>
         )}
 
-        {/* 2. MÓDULO VENTA B2C */}
+        {/* 2. MÓDULO B2C */}
         {activeTab === 'b2c' && (
-          <div className="space-y-8 animate-fadeIn">
+          <div className="space-y-8">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white/5 p-6 rounded-3xl border border-white/10">
               <div>
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold mb-2">
@@ -199,7 +199,7 @@ export default function App() {
               <Ticket className="w-12 h-12 text-blue-500 mx-auto mb-4" />
               <h3 className="text-2xl font-bold text-white mb-2">Mapa de Asientos Canvas Interactivo</h3>
               <p className="text-slate-400 max-w-md mx-auto text-sm">
-                Módulo B2C operativo. Selecciona tu zona en el mapa para proceder al pago con Stripe.
+                Módulo de Venta Directa Activo. Preparado para selección de asientos y cobro mediante pasarela Stripe.
               </p>
             </div>
           </div>
@@ -207,14 +207,14 @@ export default function App() {
 
         {/* 3. MÓDULO ADMIN */}
         {activeTab === 'admin' && (
-          <div className="space-y-8 animate-fadeIn">
+          <div className="space-y-8">
             <div className="glass-panel p-8 rounded-3xl border border-white/10">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-2xl font-bold text-white flex items-center gap-2">
                   <BarChart3 className="w-6 h-6 text-indigo-400" /> Panel de Control PyG & Métricas
                 </h2>
-                <span className="px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-xs font-semibold border border-emerald-500/20">
-                  Sesión Admin Activa
+                <span className="px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-xs font-semibold border border-emerald-500/20 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Sesión Admin Activa
                 </span>
               </div>
               <p className="text-slate-400 text-sm">Módulo de Administración y Liquidación D+3 autenticado con éxito.</p>
@@ -224,12 +224,12 @@ export default function App() {
 
         {/* 4. MÓDULO SCANNER */}
         {activeTab === 'scanner' && (
-          <div className="max-w-2xl mx-auto glass-panel p-8 rounded-3xl border border-white/10 text-center animate-fadeIn">
+          <div className="max-w-2xl mx-auto glass-panel p-8 rounded-3xl border border-white/10 text-center">
             <QrCode className="w-12 h-12 text-emerald-400 mx-auto mb-4" />
             <h2 className="text-2xl font-bold text-white mb-2">Control de Accesos en Puerta</h2>
             <p className="text-slate-400 text-sm mb-6">Escáner de validación con firmas criptográficas HMAC activado.</p>
-            <span className="px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-xs font-semibold border border-emerald-500/20">
-              Sesión Validador Activa
+            <span className="px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-xs font-semibold border border-emerald-500/20 inline-flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Sesión Validador Activa
             </span>
           </div>
         )}
@@ -237,7 +237,7 @@ export default function App() {
 
       {/* MODAL INTEGRADO DE LOGIN */}
       {isLoginOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
           <div className="relative w-full max-w-md glass-panel p-6 rounded-3xl border border-white/20 shadow-2xl bg-black/90">
             <button 
               onClick={() => setIsLoginOpen(false)} 
