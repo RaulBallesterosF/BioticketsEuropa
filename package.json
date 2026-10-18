@@ -1,8 +1,9 @@
 {
   "name": "bioticketseuropa",
   "private": true,
-  "version": "2.0.0",
+  "version": "3.0.0",
   "type": "module",
+  "main": "server.js",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
