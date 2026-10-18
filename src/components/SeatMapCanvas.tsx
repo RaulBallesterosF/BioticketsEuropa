@@ -55,7 +55,6 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
   const imgFondoRef = useRef<HTMLImageElement | null>(null);
   const targetsRef = useRef<ClickTarget[]>([]);
 
-  // Navegación Pan y Zoom
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [herramienta, setHerramienta] = useState<'seleccionar' | 'pan'>('seleccionar');
@@ -64,7 +63,6 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
 
-  // Precarga de la imagen original del recinto
   useEffect(() => {
     if (!mapa.imagenFondo) {
       imgFondoRef.current = null;
@@ -79,28 +77,20 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
     };
   }, [mapa.imagenFondo]);
 
-  // CORRECCIÓN MATEMÁTICA DE PRECISIÓN 1:1
-  const getCanvasMousePos = (clientX: number, clientY: number) => {
+  const toVirtualCoords = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
+    const internalX = (clientX - rect.left) * scaleX;
+    const internalY = (clientY - rect.top) * scaleY;
     return {
-      x: (clientX - rect.left) * scaleX,
-      y: (clientY - rect.top) * scaleY,
+      x: (internalX - pan.x) / zoom,
+      y: (internalY - pan.y) / zoom,
     };
   };
 
-  const toVirtualCoords = (clientX: number, clientY: number) => {
-    const { x, y } = getCanvasMousePos(clientX, clientY);
-    return {
-      x: (x - pan.x) / zoom,
-      y: (y - pan.y) / zoom,
-    };
-  };
-
-  // Renderizado de Taquilla con Overlay Transparente y Números Limpios
   const renderizarTaquilla = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -115,25 +105,24 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
     ctx.save();
     ctx.clearRect(0, 0, w, h);
 
-    // Fondo del visor
     ctx.fillStyle = '#060913';
     ctx.fillRect(0, 0, w, h);
 
     ctx.translate(pan.x, pan.y);
     ctx.scale(zoom, zoom);
 
-    // 1. Imagen Original del Recinto (Siempre visible en alta resolución)
     if (imgFondoRef.current) {
       ctx.drawImage(imgFondoRef.current, 0, 0, 1600, 1000);
     }
 
-    // 2. Palcos VIP con Estados Cromáticos y SOLO NÚMERO
+    // PALCOS Y SILLAS SUELTAS (SOLO NÚMERO CENTRADO)
     if (mapa.palcos && mapa.palcos.length > 0) {
       mapa.palcos.forEach((p) => {
         const px = p.x || 100;
         const py = p.y || 100;
-        const pw = p.ancho || 150;
-        const ph = p.alto || 85;
+        const isSilla = (p as any).isSillaSuelta;
+        const pw = p.ancho || (isSilla ? 34 : 150);
+        const ph = p.alto || (isSilla ? 34 : 85);
         const palcoId = `${p.id}-FULL`;
 
         const esVendido = idsVendidos.includes(palcoId);
@@ -143,21 +132,22 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
 
         ctx.save();
         ctx.beginPath();
-        ctx.roundRect(px, py, pw, ph, 8);
+        if (isSilla) {
+          ctx.arc(px + pw / 2, py + ph / 2, pw / 2, 0, Math.PI * 2);
+        } else {
+          ctx.roundRect(px, py, pw, ph, 8);
+        }
 
         if (noDisponible) {
-          // GRIS: No Disponible / Vendido
           ctx.fillStyle = 'rgba(71, 85, 105, 0.85)';
           ctx.strokeStyle = '#334155';
           ctx.lineWidth = 1.5;
         } else if (esSeleccionado) {
-          // VERDE BRILLANTE: Tu Selección Actual / Posible Compra
-          ctx.fillStyle = 'rgba(16, 185, 129, 0.75)';
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.75)'; // Verde brillante selección fan
           ctx.strokeStyle = '#10b981';
           ctx.lineWidth = 3;
         } else {
-          // TRANSPARENTE: Disponible (Permite ver el mapa original debajo)
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.04)'; // Transparente disponible
           ctx.strokeStyle = (p as any).color || 'rgba(255, 255, 255, 0.45)';
           ctx.lineWidth = 1.8;
         }
@@ -165,9 +155,9 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
         ctx.fill();
         ctx.stroke();
 
-        // EN EL MAPA SALE ÚNICAMENTE EL NÚMERO DE LA LOCALIDAD
+        // EN EL MAPA SALE ÚNICAMENTE EL NÚMERO
         ctx.fillStyle = noDisponible ? '#94a3b8' : '#ffffff';
-        ctx.font = 'bold 22px system-ui, sans-serif';
+        ctx.font = isSilla ? 'bold 12px system-ui, sans-serif' : 'bold 22px system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         const numMostrar = (p as any).numero || p.id.replace(/\D/g, '') || '1';
@@ -175,7 +165,6 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
 
         ctx.restore();
 
-        // Registro del objetivo de clic
         targetsRef.current.push({
           x: px,
           y: py,
@@ -196,7 +185,71 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
       });
     }
 
-    // 3. Zonas de Pie
+    // MESAS CON SILLAS
+    if (mapa.mesas && mapa.mesas.length > 0) {
+      mapa.mesas.forEach((m) => {
+        const mx = m.x || 300;
+        const my = m.y || 300;
+        const mw = (m as any).ancho || 90;
+        const mh = (m as any).alto || 90;
+        const mesaId = `${m.id}-FULL`;
+
+        const esVendido = idsVendidos.includes(mesaId);
+        const esSeleccionado = asientosSeleccionados.some((a) => a.id === mesaId);
+
+        ctx.save();
+        ctx.beginPath();
+        if (m.forma === 'CUADRADA' || (m.forma as string) === 'RECTANGULAR') {
+          ctx.roundRect(mx, my, mw, mh, 8);
+        } else {
+          ctx.ellipse(mx + mw / 2, my + mh / 2, mw / 2, mh / 2, 0, 0, Math.PI * 2);
+        }
+
+        if (esVendido) {
+          ctx.fillStyle = 'rgba(71, 85, 105, 0.85)';
+          ctx.strokeStyle = '#334155';
+          ctx.lineWidth = 1.5;
+        } else if (esSeleccionado) {
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.75)';
+          ctx.strokeStyle = '#10b981';
+          ctx.lineWidth = 3;
+        } else {
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+          ctx.strokeStyle = (m as any).color || '#6366f1';
+          ctx.lineWidth = 1.8;
+        }
+
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 18px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const numMesa = (m as any).numero || m.id.replace(/\D/g, '') || '1';
+        ctx.fillText(numMesa, mx + mw / 2, my + mh / 2);
+        ctx.restore();
+
+        targetsRef.current.push({
+          x: mx,
+          y: my,
+          ancho: mw,
+          alto: mh,
+          tipo: 'MESA',
+          esVendido,
+          asiento: {
+            id: mesaId,
+            numero: `${m.nombre} #${numMesa}`,
+            tipo: 'MESA',
+            precioBase: m.precioSillaBase * (m.sillas || 4),
+            mesaId: m.id,
+            diaFeria: diaFeriaSeleccionado,
+          },
+        });
+      });
+    }
+
+    // ZONAS DE PIE
     if (mapa.zonasDePie && mapa.zonasDePie.length > 0) {
       mapa.zonasDePie.forEach((z) => {
         const zonaTicketId = `ZP-${z.id}`;
@@ -223,7 +276,7 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
         ctx.font = 'bold 16px system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(z.nombre.replace(/\D/g, '') || 'Z', z.x + z.ancho / 2, z.y + z.alto / 2);
+        ctx.fillText((z as any).numero || z.nombre.replace(/\D/g, '') || 'Z', z.x + z.ancho / 2, z.y + z.alto / 2);
         ctx.restore();
 
         targetsRef.current.push({
@@ -235,7 +288,7 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
           esVendido: false,
           asiento: {
             id: `${zonaTicketId}-${Date.now().toString().slice(-4)}`,
-            numero: `${z.nombre}`,
+            numero: z.nombre,
             tipo: 'ZONA_PIE',
             precioBase: z.precioBase,
             zonaId: z.id,
@@ -252,11 +305,11 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
     renderizarTaquilla();
   }, [mapa, asientosSeleccionados, idsVendidos, idsBloqueados, zoom, pan]);
 
-  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (herramienta === 'pan' || e.button === 1) {
       isDraggingRef.current = true;
-      const { x: cx, y: cy } = getCanvasMousePos(e.clientX, e.clientY);
-      dragStartRef.current = { x: cx - pan.x, y: cy - pan.y };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      dragStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
       return;
     }
 
@@ -272,12 +325,11 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
     }
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (herramienta === 'pan' && isDraggingRef.current) {
-      const { x: cx, y: cy } = getCanvasMousePos(e.clientX, e.clientY);
       setPan({
-        x: cx - dragStartRef.current.x,
-        y: cy - dragStartRef.current.y,
+        x: e.clientX - dragStartRef.current.x,
+        y: e.clientY - dragStartRef.current.y,
       });
       return;
     }
@@ -305,7 +357,10 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
     }
   };
 
-  const handleMouseUp = () => {
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (isDraggingRef.current) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
     isDraggingRef.current = false;
   };
 
@@ -319,7 +374,6 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
     <div className="space-y-4">
       {/* Barra de Herramientas Fan */}
       <div className="glass-panel p-3.5 rounded-3xl border border-white/10 flex flex-wrap justify-between items-center gap-3">
-        {/* Leyenda de Estados */}
         <div className="flex items-center gap-4 text-xs font-bold">
           <div className="flex items-center gap-1.5">
             <span className="w-3.5 h-3.5 rounded-md border border-white/40 bg-white/5"></span>
@@ -335,7 +389,6 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
           </div>
         </div>
 
-        {/* Controles Zoom y Desplazamiento */}
         <div className="flex items-center bg-slate-900 border border-white/10 rounded-2xl p-1 gap-1">
           <button
             onClick={() => setHerramienta('seleccionar')}
@@ -380,10 +433,11 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
           ref={canvasRef}
           width={1600}
           height={1000}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
           onWheel={handleWheel}
+          style={{ touchAction: 'none' }}
           className="rounded-2xl max-w-full h-auto border border-white/5 select-none"
         />
       </div>
