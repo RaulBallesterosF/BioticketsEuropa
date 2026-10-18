@@ -8,7 +8,6 @@ import {
   ZonaDePie,
   FormaMesa,
   ModoVentaPalco,
-  PlantillaRecintoMaestro,
 } from '../types';
 import {
   Compass,
@@ -47,11 +46,7 @@ import {
   Armchair,
   FolderOpen,
 } from 'lucide-react';
-import {
-  obtenerPlantillasMapas,
-  guardarPlantillaMapa,
-  eliminarPlantillaMapa,
-} from '../services/ticketService';
+import { PlantillaRecintoMaestro } from './EventManager';
 
 interface SeatMapStudioProps {
   evento: Evento;
@@ -100,6 +95,36 @@ export interface ZonaStudio extends ZonaDePie {
 
 type PuntoControl = 'nw' | 'ne' | 'se' | 'sw' | 'n' | 's' | 'e' | 'w';
 
+const PLANTILLAS_INICIALES_STUDIO: PlantillaRecintoMaestro[] = [
+  {
+    id: 'PLANTILLA-ARENA-360',
+    nombre: 'Arena Multieventos 360° - Formato Concierto',
+    recinto: 'Estadio Metropolitano / Movistar Arena',
+    ciudad: 'Madrid / Bogotá',
+    comentarios: 'Diseño arquitectónico con 2 zonas de pie en pista central, 20 palcos VIP perimetrales numerados y platea en herradura.',
+    aforoTotal: 5500,
+    totalPalcos: 20,
+    totalMesas: 10,
+    totalZonas: 2,
+    fechaCreacion: '2026-01-15',
+    mapa: {
+      imagenFondo: 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?auto=format&fit=crop&w=1600&q=80',
+      imagenFondoOpacidad: 0.65,
+      aforoGeneral: { total: 1000, vendidas: 0, precioBase: 45.0, nombre: 'Pista General' },
+      zonasDePie: [
+        { id: 'z-front', nombre: 'Front Stage Diamante', color: '#06b6d4', precioBase: 55.0, aforoMaximo: 600, vendidas: 0, x: 250, y: 120, ancho: 1100, alto: 160 },
+        { id: 'z-general', nombre: 'Pista General de Pie', color: '#38bdf8', precioBase: 40.0, aforoMaximo: 1800, vendidas: 0, x: 250, y: 310, ancho: 1100, alto: 180 },
+      ],
+      filas: [],
+      mesas: [],
+      palcos: [
+        { id: 'P-1', nombre: 'Palco Real', capacidad: 10, precioPalcoBase: 1200.0, modoVenta: 'COMPLETO', x: 260, y: 530, ancho: 140, alto: 90 },
+        { id: 'P-2', nombre: 'Palco Real', capacidad: 10, precioPalcoBase: 1200.0, modoVenta: 'COMPLETO', x: 430, y: 530, ancho: 140, alto: 90 },
+      ],
+    },
+  },
+];
+
 export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
   evento,
   mapaActual,
@@ -109,7 +134,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
 }) => {
   const [modoVista, setModoVista] = useState<'editor' | 'preview'>('editor');
 
-  // Metadatos y Fondo
   const [nombreMapa, setNombreMapa] = useState<string>(`Plano Oficial - ${evento.lugar}`);
   const [comentariosMapa, setComentariosMapa] = useState<string>(
     'Plano oficial calibrado. Aforo optimizado con palcos VIP y zonas generales.'
@@ -121,17 +145,22 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     mapaActual.imagenFondoOpacidad !== undefined ? mapaActual.imagenFondoOpacidad : 0.75
   );
 
-  // Elementos del recinto
   const [palcos, setPalcos] = useState<PalcoStudio[]>((mapaActual.palcos || []) as PalcoStudio[]);
   const [mesas, setMesas] = useState<MesaStudio[]>((mapaActual.mesas || []) as MesaStudio[]);
   const [zonasDePie, setZonasDePie] = useState<ZonaStudio[]>((mapaActual.zonasDePie || []) as ZonaStudio[]);
   const [filas, setFilas] = useState<FilaAsientos[]>(mapaActual.filas || []);
 
-  // BIBLIOTECA DE PLANTILLAS MAESTRAS
-  const [plantillas, setPlantillas] = useState<PlantillaRecintoMaestro[]>([]);
+  // BIBLIOTECA DE PLANTILLAS
+  const [plantillas, setPlantillas] = useState<PlantillaRecintoMaestro[]>(() => {
+    try {
+      const guardadas = localStorage.getItem('biotickets_master_map_library');
+      if (guardadas) return JSON.parse(guardadas);
+    } catch {}
+    return PLANTILLAS_INICIALES_STUDIO;
+  });
+
   const [modalBibliotecaAbierto, setModalBibliotecaAbierto] = useState(false);
 
-  // Referencias mutables para arrastre fluido
   const palcosRef = useRef(palcos);
   const mesasRef = useRef(mesas);
   const zonasRef = useRef(zonasDePie);
@@ -139,33 +168,25 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
   useEffect(() => { mesasRef.current = mesas; }, [mesas]);
   useEffect(() => { zonasRef.current = zonasDePie; }, [zonasDePie]);
 
-  // Selección activa
   const [elementoSel, setElementoSel] = useState<{ tipo: 'palco' | 'mesa' | 'zona'; id: string } | null>(null);
   const [previewSeleccionados, setPreviewSeleccionados] = useState<string[]>([]);
 
-  // Herramientas y Navegación
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [herramienta, setHerramienta] = useState<'seleccionar' | 'pan' | 'palco' | 'mesa' | 'silla' | 'zona'>('seleccionar');
 
-  // Ajustes de Mesas
   const [formaMesaNueva, setFormaMesaNueva] = useState<FormaMesaExtendida>('REDONDA');
   const [disposicionSillasNueva, setDisposicionSillasNueva] = useState<DisposicionSillasMesa>('ALREDEDOR');
   const [sillasMesaNueva, setSillasMesaNueva] = useState<number>(6);
-
-  // Ajustes de Sillas sueltas
   const [sillasSueltasPrecio, setSillasSueltasPrecio] = useState<number>(50.0);
 
-  // Pestaña lateral
-  const [tabSidebar, setTabSidebar] = useState<'herramientas' | 'fondo' | 'tarifas' | 'biblioteca'>('herramientas');
+  const [tabSidebar, setTabSidebar] = useState<'herramientas' | 'fondo' | 'tarifas'>('herramientas');
 
-  // Feedback
   const [guardando, setGuardando] = useState(false);
   const [guardadoExito, setGuardadoExito] = useState(false);
   const [mensajeNotif, setMensajeNotif] = useState<string | null>(null);
   const [modalCsvAbierto, setModalCsvAbierto] = useState(false);
 
-  // Canvas y referencias de arrastre
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imgFondoRef = useRef<HTMLImageElement | null>(null);
   const isDraggingRef = useRef(false);
@@ -180,11 +201,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     setTimeout(() => setMensajeNotif(null), 4000);
   };
 
-  useEffect(() => {
-    setPlantillas(obtenerPlantillasMapas());
-  }, []);
-
-  // 1. INICIAR MAPA EN BLANCO TOTAL (SOLO CUADRÍCULA)
   const handleNuevoMapaEnBlanco = () => {
     if (window.confirm('¿Deseas iniciar un lienzo completamente en blanco? Se limpiará el mapa actual.')) {
       setPalcos([]);
@@ -201,7 +217,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     }
   };
 
-  // Carga de imagen de fondo
   useEffect(() => {
     if (!imagenFondo) {
       imgFondoRef.current = null;
@@ -219,7 +234,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     };
   }, [imagenFondo]);
 
-  // REUTILIZAR MAPA CONSERVANDO FIGURAS Y CAMBIANDO SOLO LA IMAGEN
   const handleReutilizarPlantilla = (p: PlantillaRecintoMaestro, soloReemplazarFondo = false) => {
     if (!soloReemplazarFondo) {
       setNombreMapa(p.nombre);
@@ -232,14 +246,12 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       setImagenFondoOpacidad(p.mapa.imagenFondoOpacidad ?? 0.75);
       notificar(`Plantilla "${p.nombre}" cargada con todas sus localidades.`);
     } else {
-      // Reemplazar solo imagen conservando figuras
       setImagenFondo(p.mapa.imagenFondo || '');
-      notificar('Imagen de fondo actualizada conservando todas las zonas y palcos intactos.');
+      notificar('Imagen de fondo actualizada conservando palcos y zonas intactos.');
     }
     setModalBibliotecaAbierto(false);
   };
 
-  // GUARDAR EN BIBLIOTECA MAESTRA
   const handleGuardarEnBiblioteca = () => {
     const totalAforo =
       zonasDePie.reduce((acc, z) => acc + (z.aforoMaximo || 0), 0) +
@@ -268,12 +280,13 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       },
     };
 
-    const actualizadas = guardarPlantillaMapa(nuevaPlantilla);
+    const filtradas = plantillas.filter((p) => p.id !== nuevaPlantilla.id);
+    const actualizadas = [nuevaPlantilla, ...filtradas];
     setPlantillas(actualizadas);
+    localStorage.setItem('biotickets_master_map_library', JSON.stringify(actualizadas));
     notificar(`¡Mapa "${nombreMapa}" guardado en la biblioteca maestra!`);
   };
 
-  // Coordenadas milimétricas 1:1
   const toVirtualCoords = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
@@ -320,7 +333,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     ctx.closePath();
   };
 
-  // Renderizado del Canvas 2D
   const renderizar = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -339,7 +351,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     ctx.translate(pan.x, pan.y);
     ctx.scale(zoom, zoom);
 
-    // 1. Cuadrícula
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
     ctx.lineWidth = 1 / zoom;
     for (let x = -1000; x < 2600; x += 40) {
@@ -355,7 +366,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       ctx.stroke();
     }
 
-    // 2. Fondo
     if (imgFondoRef.current) {
       ctx.save();
       ctx.globalAlpha = imagenFondoOpacidad;
@@ -371,7 +381,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       }
     }
 
-    // 3. Zonas de Pie
+    // Zonas de Pie
     zonasRef.current.forEach((z) => {
       const esSel = elementoSel?.tipo === 'zona' && elementoSel.id === z.id;
       const esPreviewSel = previewSeleccionados.includes(z.id);
@@ -412,7 +422,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       }
     });
 
-    // 4. Palcos y Sillas Sueltas
+    // Palcos y Sillas Sueltas (SOLO NÚMERO LIMPIO)
     palcosRef.current.forEach((p) => {
       const px = p.x || 100;
       const py = p.y || 100;
@@ -449,7 +459,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       ctx.fill();
       ctx.stroke();
 
-      // NÚMERO CENTRADO EN EL MAPA
       ctx.fillStyle = modoVista === 'preview' && esPreviewSel ? '#ffffff' : colorPalco;
       ctx.font = p.isSillaSuelta ? 'bold 12px system-ui, sans-serif' : 'bold 22px system-ui, sans-serif';
       ctx.textAlign = 'center';
@@ -463,7 +472,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       }
     });
 
-    // 5. Mesas y Sillas
+    // Mesas con Disposición Geométrica
     mesasRef.current.forEach((m) => {
       const mx = m.x || 300;
       const my = m.y || 300;
@@ -520,7 +529,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       ctx.fillText(numMesa, mx + mw / 2, my + mh / 2);
       ctx.restore();
 
-      // Sillas en disposición
       const totalSillas = m.sillas || 4;
       const disp = m.disposicionSillas || 'ALREDEDOR';
       const radSilla = 6;
@@ -576,7 +584,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       }
     });
 
-    // 6. Caja de dibujo
     if (drawingBoxRef.current && modoVista === 'editor') {
       const db = drawingBoxRef.current;
       const bx = Math.min(db.startX, db.currentX);
@@ -652,7 +659,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     return null;
   };
 
-  // POINTER EVENTS CON PRECISIÓN 1:1
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
     const { x, y } = toVirtualCoords(e.clientX, e.clientY);
@@ -863,17 +869,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
           y: ry,
           ancho: wFinal,
           alto: hFinal,
-          tarifas: {
-            preventa: 560.0,
-            lanzamiento: 640.0,
-            etapa1: 720.0,
-            etapa2: 800.0,
-            etapa3Full: 920.0,
-            esCorporativo: false,
-            precioCorporativo: 700.0,
-            codigoPromoVIP: 'VIP2026',
-            descuentoPromoPct: 10,
-          },
         };
         const actualizados = [...palcosRef.current, nuevoPalco];
         palcosRef.current = actualizados;
@@ -992,7 +987,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       {/* BARRA SUPERIOR DE ACCIONES */}
       <div className="glass-panel p-4 rounded-3xl border border-white/10 flex flex-wrap justify-between items-center gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          {/* Botón Nuevo Mapa en Blanco */}
           <button
             onClick={handleNuevoMapaEnBlanco}
             className="px-3.5 py-2 rounded-2xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
@@ -1002,7 +996,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
             <span>Nuevo en Blanco</span>
           </button>
 
-          {/* Botón de Biblioteca de Mapas Guardados */}
           <button
             onClick={() => setModalBibliotecaAbierto(true)}
             className="px-3.5 py-2 rounded-2xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
@@ -1011,7 +1004,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
             <span>Biblioteca de Recintos</span>
           </button>
 
-          {/* Botón Guardar en Biblioteca */}
           <button
             onClick={handleGuardarEnBiblioteca}
             className="px-3.5 py-2 rounded-2xl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
@@ -1021,7 +1013,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
           </button>
         </div>
 
-        {/* Switcher Modo Edición vs Modo Previsualizador */}
+        {/* Switcher Modo Edición vs Previsualizador */}
         <div className="flex items-center bg-slate-900 border border-white/10 rounded-2xl p-1">
           <button
             onClick={() => {
@@ -1050,7 +1042,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
           </button>
         </div>
 
-        {/* Botón Publicar */}
         <button
           onClick={handleGuardarDefinitivo}
           disabled={guardando}
@@ -1077,7 +1068,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
         </div>
       )}
 
-      {/* Grid Principal: Formulario a la Izquierda y Canvas a la Derecha */}
+      {/* Grid Principal */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* PANEL IZQUIERDO */}
         <div className="lg:col-span-4 space-y-4">
@@ -1226,14 +1217,10 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
                     </div>
                   </div>
                 )}
-
-                <p className="text-[11px] text-slate-400">
-                  Arrastra con el ratón sobre el lienzo para trazar. Selecciona cualquier elemento para redimensionarlo con los 8 puntos de control.
-                </p>
               </div>
             )}
 
-            {/* TAB 2: CALIBRACIÓN DEL PLANO DE FONDO */}
+            {/* TAB 2: FONDO */}
             {tabSidebar === 'fondo' && (
               <div className="space-y-4 animate-fadeIn">
                 <label className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer">
@@ -1267,9 +1254,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
                 />
 
                 <div className="space-y-3 pt-2 border-t border-white/5">
-                  <span className="text-[10px] uppercase font-bold text-indigo-300 block tracking-wider">
-                    Calibración de Tamaño y Disposición:
-                  </span>
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div>
                       <label className="text-[10px] text-slate-400 block mb-1">Ancho (px):</label>
@@ -1454,29 +1438,23 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
                   </div>
                 ) : (
                   <p className="text-xs text-slate-400 text-center py-6">
-                    Selecciona un palco o elemento para editar sus etapas tarifarias.
+                    Selecciona un palco para editar sus tarifas.
                   </p>
                 )}
               </div>
             )}
           </div>
 
-          {/* INSPECTOR DE LOCALIDAD (CONTROL Y BOLETA VS MAPA) */}
-          {elementoSel && (
+          {/* INSPECTOR DE LOCALIDAD */}
+          {elementoSel && palcoActivo && (
             <div className="glass-panel rounded-3xl p-4 border border-indigo-500/30 space-y-3 bg-slate-950/80 animate-fadeIn">
               <div className="flex justify-between items-center border-b border-white/10 pb-2">
                 <span className="text-xs font-bold text-indigo-300 uppercase flex items-center gap-1.5">
-                  <Settings2 className="w-4 h-4" /> Inspector del Elemento
+                  <Settings2 className="w-4 h-4" /> Inspector: Palco #{palcoActivo.numero}
                 </span>
                 <button
                   onClick={() => {
-                    if (elementoSel.tipo === 'palco') {
-                      setPalcos(palcos.filter((p) => p.id !== elementoSel.id));
-                    } else if (elementoSel.tipo === 'mesa') {
-                      setMesas(mesas.filter((m) => m.id !== elementoSel.id));
-                    } else if (elementoSel.tipo === 'zona') {
-                      setZonasDePie(zonasDePie.filter((z) => z.id !== elementoSel.id));
-                    }
+                    setPalcos(palcos.filter((p) => p.id !== elementoSel.id));
                     setElementoSel(null);
                   }}
                   className="text-rose-400 hover:bg-rose-500/10 p-1 rounded-lg cursor-pointer"
@@ -1486,107 +1464,31 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
                 </button>
               </div>
 
-              {elementoSel.tipo === 'palco' && palcoActivo && (
-                <div className="space-y-3 text-xs">
-                  <div>
-                    <label className="text-[10px] text-slate-400 block mb-1">
-                      Nombre Interno (Sale en la Boleta y Control):
-                    </label>
-                    <input
-                      type="text"
-                      value={palcoActivo.nombre}
-                      onChange={(e) =>
-                        setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, nombre: e.target.value } : p)))
-                      }
-                      className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[10px] text-amber-400 font-bold block mb-1">
-                      Número de Localidad (Sale en el Mapa):
-                    </label>
-                    <input
-                      type="text"
-                      value={palcoActivo.numero || ''}
-                      onChange={(e) =>
-                        setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, numero: e.target.value } : p)))
-                      }
-                      className="w-full bg-slate-900 border border-amber-500/40 rounded-xl p-2 text-amber-300 font-bold font-mono text-base text-center"
-                    />
-                  </div>
-
-                  {!palcoActivo.isSillaSuelta && (
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-[10px] text-slate-400 block mb-1">Plazas:</label>
-                        <input
-                          type="number"
-                          value={palcoActivo.capacidad}
-                          onChange={(e) =>
-                            setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, capacidad: parseInt(e.target.value) || 1 } : p)))
-                          }
-                          className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-slate-400 block mb-1">Precio Total ({evento.moneda}):</label>
-                        <input
-                          type="number"
-                          value={palcoActivo.precioPalcoBase}
-                          onChange={(e) =>
-                            setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, precioPalcoBase: parseFloat(e.target.value) || 0 } : p)))
-                          }
-                          className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex items-center justify-between pt-1">
-                    <span className="text-slate-400">Color:</span>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="color"
-                        value={palcoActivo.color || '#eab308'}
-                        onChange={(e) =>
-                          setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, color: e.target.value } : p)))
-                        }
-                        className="w-8 h-8 rounded-lg bg-slate-900 border border-white/10 cursor-pointer"
-                      />
-                      <span className="font-mono text-white text-[11px]">{palcoActivo.color || '#eab308'}</span>
-                    </div>
-                  </div>
+              <div className="space-y-3 text-xs">
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">Nombre Interno (Boleta y Control):</label>
+                  <input
+                    type="text"
+                    value={palcoActivo.nombre}
+                    onChange={(e) =>
+                      setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, nombre: e.target.value } : p)))
+                    }
+                    className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold"
+                  />
                 </div>
-              )}
 
-              {elementoSel.tipo === 'mesa' && mesaActiva && (
-                <div className="space-y-3 text-xs">
-                  <div>
-                    <label className="text-[10px] text-slate-400 block mb-1">Nombre Interno (Boleta):</label>
-                    <input
-                      type="text"
-                      value={mesaActiva.nombre}
-                      onChange={(e) =>
-                        setMesas(mesas.map((m) => (m.id === mesaActiva.id ? { ...m, nombre: e.target.value } : m)))
-                      }
-                      className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[10px] text-indigo-400 font-bold block mb-1">Número de Mesa (Mapa):</label>
-                    <input
-                      type="text"
-                      value={mesaActiva.numero || ''}
-                      onChange={(e) =>
-                        setMesas(mesas.map((m) => (m.id === mesaActiva.id ? { ...m, numero: e.target.value } : m)))
-                      }
-                      className="w-full bg-slate-900 border border-indigo-500/40 rounded-xl p-2 text-indigo-300 font-bold font-mono text-base text-center"
-                    />
-                  </div>
+                <div>
+                  <label className="text-[10px] text-amber-400 font-bold block mb-1">Número (Sale en el Mapa):</label>
+                  <input
+                    type="text"
+                    value={palcoActivo.numero || ''}
+                    onChange={(e) =>
+                      setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, numero: e.target.value } : p)))
+                    }
+                    className="w-full bg-slate-900 border border-amber-500/40 rounded-xl p-2 text-amber-300 font-bold font-mono text-base text-center"
+                  />
                 </div>
-              )}
+              </div>
             </div>
           )}
         </div>
@@ -1598,7 +1500,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
               <div className="flex items-center gap-2">
                 <span className={`w-2.5 h-2.5 rounded-full ${modoVista === 'preview' ? 'bg-emerald-400 animate-pulse' : 'bg-indigo-400'}`}></span>
                 <span className="text-white font-bold">
-                  {modoVista === 'preview' ? 'Previsualizador Fan (Solo Números)' : 'Lienzo de Diseño Arquitectónico'}
+                  {modoVista === 'preview' ? 'Previsualizador Taquilla Fan (Solo Números)' : 'Lienzo de Diseño Arquitectónico'}
                 </span>
               </div>
 
@@ -1665,9 +1567,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
         </div>
       </div>
 
-      {/* ======================================================== */}
-      {/* MODAL: BIBLIOTECA MAESTRA DE RECINTOS & MAPAS GUARDADOS  */}
-      {/* ======================================================== */}
+      {/* MODAL: BIBLIOTECA MAESTRA DE RECINTOS */}
       {modalBibliotecaAbierto && (
         <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-white/10 rounded-3xl p-6 max-w-4xl w-full space-y-4 shadow-2xl animate-fadeIn max-h-[90vh] overflow-y-auto">
@@ -1677,13 +1577,13 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
                 <div>
                   <h3 className="text-base font-bold text-white">Biblioteca Maestra de Recintos y Mapas</h3>
                   <span className="text-xs text-slate-400">
-                    Carga un mapa existente en este evento o sustituye la imagen de fondo conservando toda la distribución.
+                    Carga un mapa existente o sustituye solo la imagen de fondo manteniendo todos los palcos en su lugar.
                   </span>
                 </div>
               </div>
               <button
                 onClick={() => setModalBibliotecaAbierto(false)}
-                className="text-slate-400 hover:text-white p-1 rounded-xl"
+                className="text-slate-400 hover:text-white p-1 rounded-xl cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1733,13 +1633,13 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
                   <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/5">
                     <button
                       onClick={() => handleReutilizarPlantilla(p, false)}
-                      className="py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition"
+                      className="py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition cursor-pointer"
                     >
                       Cargar Completo
                     </button>
                     <button
                       onClick={() => handleReutilizarPlantilla(p, true)}
-                      className="py-2 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-slate-200 font-bold text-xs transition"
+                      className="py-2 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-slate-200 font-bold text-xs transition cursor-pointer"
                       title="Mantiene los palcos actuales pero aplica la imagen de este recinto"
                     >
                       Usar solo Fondo
@@ -1752,7 +1652,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
             <div className="flex justify-end pt-2 border-t border-white/10">
               <button
                 onClick={() => setModalBibliotecaAbierto(false)}
-                className="px-5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs"
+                className="px-5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs cursor-pointer"
               >
                 Cerrar
               </button>
