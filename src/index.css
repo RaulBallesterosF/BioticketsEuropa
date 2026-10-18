@@ -44,25 +44,3 @@
   background: #0077ed;
   box-shadow: 0 0 20px rgba(0, 113, 227, 0.5);
 }
-
-@keyframes scanLaser {
-  0% { top: 5%; opacity: 0.8; }
-  50% { top: 90%; opacity: 1; }
-  100% { top: 5%; opacity: 0.8; }
-}
-
-.animate-scan-laser {
-  animation: scanLaser 2s ease-in-out infinite;
-}
-
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.5);
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 9999px;
-}
