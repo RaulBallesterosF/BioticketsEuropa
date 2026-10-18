@@ -21,7 +21,7 @@ app.use(express.static(distFolder, { index: false }));
 app.get(['/health', '/healthcheck', '/api/health'], (req, res) => {
   res.status(200).json({ 
     status: 'healthy', 
-    version: '4.2.0-production',
+    version: '5.0.0-production',
     distExists: fs.existsSync(distFolder)
   });
 });
@@ -31,7 +31,7 @@ app.use('*', (req, res) => {
   if (fs.existsSync(indexFile)) {
     res.sendFile(indexFile);
   } else {
-    res.status(200).send('Servidor activo. Esperando compilación...');
+    res.status(200).send('Servidor BioticketsEuropa activo. Generando activos...');
   }
 });
 
