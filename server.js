@@ -1,55 +1,45 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const port = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
+// 1. Servir los archivos estáticos compilados por Vite
+app.use(express.static(path.join(__dirname, 'dist')));
+
+// 2. Endpoint de salud de la API
 app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    version: '2.5.0-enterprise',
-    service: 'BioticketsEuropa Engine',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    port: port,
+  res.json({ status: 'ok', app: 'BioticketsEuropa Engine' });
+});
+
+// 3. Redirigir cualquier otra ruta a la aplicación web de React (Single Page App)
+app.get('*', (req, res) => {
+  const indexPath = path.join(__dirname, 'dist', 'index.html');
+  res.sendFile(indexPath, (err) => {
+    if (err) {
+      // Si la carpeta dist aún no fue compilada en local
+      res.send(`
+        <!DOCTYPE html>
+        <html>
+          <head><title>BioticketsEuropa Engine</title></head>
+          <body style="background:#000;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;">
+            <div style="text-align:center;">
+              <h2>BioticketsEuropa Engine</h2>
+              <p>Iniciando compilación web...</p>
+            </div>
+          </body>
+        </html>
+      `);
+    }
   });
 });
 
-app.get('/api/tickets/wallet/apple/:ticketId', (req, res) => {
-  const { ticketId } = req.params;
-  res.setHeader('Content-Type', 'application/vnd.apple.pkpass');
-  res.setHeader('Content-Disposition', `attachment; filename="ticket-${ticketId}.pkpass"`);
-  res.json({
-    passTypeIdentifier: 'pass.com.bioticketseuropa.pro',
-    serialNumber: ticketId,
-    description: 'BioticketsEuropa Apple Wallet Pass',
-    organizationName: 'BioticketsEuropa SaaS',
-    backgroundColor: 'rgb(0, 0, 0)',
-    foregroundColor: 'rgb(255, 255, 255)',
-    labelColor: 'rgb(0, 113, 227)',
-  });
-});
-
-const distPath = path.resolve(__dirname, 'dist');
-
-if (fs.existsSync(distPath)) {
-  app.use(express.static(distPath));
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(distPath, 'index.html'));
-  });
-} else {
-  app.get('*', (req, res) => {
-    res.status(200).send('<h1>BioticketsEuropa Engine Server Running</h1>');
-  });
-}
-
-app.listen(port, () => {
-  console.log(`🚀 BioticketsEuropa Server listo en el puerto ${port}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Servidor activo en el puerto ${PORT}`);
 });
