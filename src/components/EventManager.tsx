@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Evento, Promotor, PlantillaRecintoMaestro, MapaRecinto } from '../types';
+import { Evento, Promotor, MapaRecinto } from '../types';
 import {
   Calendar,
   Plus,
@@ -14,16 +14,12 @@ import {
   Coffee,
   Upload,
   Sparkles,
-  Link as LinkIcon,
-  HelpCircle,
-  FileText,
-  DollarSign,
   X,
+  Check,
+  FileText,
+  Image as ImageIcon,
+  HelpCircle,
 } from 'lucide-react';
-import {
-  obtenerPlantillasMapas,
-  guardarConfiguracionMapa,
-} from '../services/ticketService';
 
 interface EventManagerProps {
   eventos: Evento[];
@@ -34,6 +30,78 @@ interface EventManagerProps {
   eventoSeleccionadoId?: number;
 }
 
+export interface PlantillaRecintoMaestro {
+  id: string;
+  nombre: string;
+  recinto: string;
+  ciudad: string;
+  comentarios: string;
+  aforoTotal: number;
+  totalPalcos: number;
+  totalMesas: number;
+  totalZonas: number;
+  fechaCreacion: string;
+  mapa: MapaRecinto;
+}
+
+const PLANTILLAS_INICIALES: PlantillaRecintoMaestro[] = [
+  {
+    id: 'PLANTILLA-ARENA-360',
+    nombre: 'Arena Multieventos 360° - Formato Concierto',
+    recinto: 'Estadio Metropolitano / Movistar Arena',
+    ciudad: 'Madrid / Bogotá',
+    comentarios: 'Diseño arquitectónico con 2 zonas de pie en pista central, 20 palcos VIP perimetrales numerados y platea en herradura.',
+    aforoTotal: 5500,
+    totalPalcos: 20,
+    totalMesas: 10,
+    totalZonas: 2,
+    fechaCreacion: '2026-01-15',
+    mapa: {
+      imagenFondo: 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?auto=format&fit=crop&w=1600&q=80',
+      imagenFondoOpacidad: 0.65,
+      aforoGeneral: { total: 1000, vendidas: 0, precioBase: 45.0, nombre: 'Pista General' },
+      zonasDePie: [
+        { id: 'z-front', nombre: 'Front Stage Diamante', color: '#06b6d4', precioBase: 55.0, aforoMaximo: 600, vendidas: 0, x: 250, y: 120, ancho: 1100, alto: 160 },
+        { id: 'z-general', nombre: 'Pista General de Pie', color: '#38bdf8', precioBase: 40.0, aforoMaximo: 1800, vendidas: 0, x: 250, y: 310, ancho: 1100, alto: 180 },
+      ],
+      filas: [],
+      mesas: [],
+      palcos: [
+        { id: 'P-1', nombre: 'Palco Real', capacidad: 10, precioPalcoBase: 1200.0, modoVenta: 'COMPLETO', x: 260, y: 530, ancho: 140, alto: 90 },
+        { id: 'P-2', nombre: 'Palco Real', capacidad: 10, precioPalcoBase: 1200.0, modoVenta: 'COMPLETO', x: 430, y: 530, ancho: 140, alto: 90 },
+        { id: 'P-3', nombre: 'Palco Real', capacidad: 10, precioPalcoBase: 1200.0, modoVenta: 'COMPLETO', x: 600, y: 530, ancho: 140, alto: 90 },
+        { id: 'P-4', nombre: 'Palco Real', capacidad: 10, precioPalcoBase: 1200.0, modoVenta: 'COMPLETO', x: 770, y: 530, ancho: 140, alto: 90 },
+      ],
+    },
+  },
+  {
+    id: 'PLANTILLA-CLUB-VIP',
+    nombre: 'Club Nocturno & Discoteca Lounge - 45 Palcos',
+    recinto: 'Teatro Central / Club Discoteca',
+    ciudad: 'Medellín / Barcelona',
+    comentarios: 'Distribución íntima con 45 palcos numerados sobre plataforma elevada y mesas redondas VIP frente a cabina de sonido.',
+    aforoTotal: 850,
+    totalPalcos: 45,
+    totalMesas: 15,
+    totalZonas: 1,
+    fechaCreacion: '2026-02-01',
+    mapa: {
+      imagenFondo: 'https://images.unsplash.com/photo-1566737236500-c8ac43014a67?auto=format&fit=crop&w=1600&q=80',
+      imagenFondoOpacidad: 0.7,
+      aforoGeneral: { total: 200, vendidas: 0, precioBase: 30.0, nombre: 'Acceso General' },
+      zonasDePie: [
+        { id: 'z-lounge', nombre: 'Pista Central Baile', color: '#a855f7', precioBase: 35.0, aforoMaximo: 250, vendidas: 0, x: 300, y: 150, ancho: 1000, alto: 180 },
+      ],
+      filas: [],
+      mesas: [],
+      palcos: [
+        { id: 'P-1', nombre: 'Palco Oro', capacidad: 8, precioPalcoBase: 800.0, modoVenta: 'COMPLETO', x: 300, y: 370, ancho: 130, alto: 80 },
+        { id: 'P-2', nombre: 'Palco Oro', capacidad: 8, precioPalcoBase: 800.0, modoVenta: 'COMPLETO', x: 450, y: 370, ancho: 130, alto: 80 },
+      ],
+    },
+  },
+];
+
 export const EventManager: React.FC<EventManagerProps> = ({
   eventos,
   promotores,
@@ -42,7 +110,6 @@ export const EventManager: React.FC<EventManagerProps> = ({
   onSeleccionarEvento,
   eventoSeleccionadoId,
 }) => {
-  // Datos básicos del formulario de evento
   const [nombre, setNombre] = useState('');
   const [pais, setPais] = useState<'España' | 'Colombia' | 'México' | 'Estados Unidos'>('España');
   const [ciudad, setCiudad] = useState('Madrid');
@@ -67,30 +134,27 @@ export const EventManager: React.FC<EventManagerProps> = ({
   const [diasFeria, setDiasFeria] = useState(3);
   const [aforoMaximo, setAforoMaximo] = useState(5000);
 
-  // ========================================================
-  // CASILLA DE MAPAS DISPONIBLES Y VINCULACIÓN DE PLANTILLAS
-  // ========================================================
-  const [plantillas, setPlantillas] = useState<PlantillaRecintoMaestro[]>([]);
-  const [plantillaSeleccionada, setPlantillaSeleccionada] = useState<PlantillaRecintoMaestro | null>(null);
+  // BIBLIOTECA DE MAPAS MAESTROS
+  const [plantillas, setPlantillas] = useState<PlantillaRecintoMaestro[]>(() => {
+    try {
+      const guardadas = localStorage.getItem('biotickets_master_map_library');
+      if (guardadas) return JSON.parse(guardadas);
+    } catch {}
+    return PLANTILLAS_INICIALES;
+  });
 
-  // Personalización del mapa para este evento en particular:
+  const [plantillaSeleccionada, setPlantillaSeleccionada] = useState<PlantillaRecintoMaestro | null>(
+    PLANTILLAS_INICIALES[0]
+  );
   const [nuevaImagenFondoEvento, setNuevaImagenFondoEvento] = useState<string>('');
   const [multiplicadorPrecios, setMultiplicadorPrecios] = useState<number>(1.0);
 
-  // Modal de Previsualización Rápida
+  // Modal de Previsualización
   const [modalPreviewAbierto, setModalPreviewAbierto] = useState(false);
   const [plantillaEnPreview, setPlantillaEnPreview] = useState<PlantillaRecintoMaestro | null>(null);
 
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState('');
-
-  useEffect(() => {
-    const list = obtenerPlantillasMapas();
-    setPlantillas(list);
-    if (list.length > 0 && !plantillaSeleccionada) {
-      setPlantillaSeleccionada(list[0]);
-    }
-  }, []);
 
   const handlePaisChange = (nuevoPais: any) => {
     setPais(nuevoPais);
@@ -120,7 +184,6 @@ export const EventManager: React.FC<EventManagerProps> = ({
     setMensaje('');
 
     try {
-      // 1. Crear Evento
       await onCrearEvento({
         nombre,
         pais,
@@ -142,10 +205,9 @@ export const EventManager: React.FC<EventManagerProps> = ({
         pulepPct: Number(pulepPct),
         moneda,
         estado: 'ACTIVO',
-        mapaAsociadoId: plantillaSeleccionada?.id,
       });
 
-      // 2. Si se seleccionó una plantilla de mapa, aplicar su configuración al evento recién creado
+      // Clonar y persistir mapa vinculado para este evento
       if (plantillaSeleccionada) {
         const factor = Number(multiplicadorPrecios) || 1.0;
         const mapaClonado: MapaRecinto = {
@@ -175,10 +237,8 @@ export const EventManager: React.FC<EventManagerProps> = ({
             precioBase: Number((f.precioBase * factor).toFixed(2)),
           })),
         };
-
-        // Guardar para el ID del evento más reciente
         const nuevoIdEstimado = eventos.length ? Math.max(...eventos.map((ev) => ev.id)) + 1 : 1;
-        await guardarConfiguracionMapa(nuevoIdEstimado, mapaClonado);
+        localStorage.setItem(`biotickets_map_${nuevoIdEstimado}`, JSON.stringify(mapaClonado));
       }
 
       setMensaje('¡Evento publicado y mapa de recinto vinculado exitosamente!');
@@ -194,13 +254,13 @@ export const EventManager: React.FC<EventManagerProps> = ({
       <div className="glass-panel rounded-3xl p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <span className="text-[10px] uppercase font-bold tracking-widest text-indigo-400 bg-indigo-500/10 px-2.5 py-0.5 rounded-full border border-indigo-500/20">
-            Módulo 2: Eventos & Configuración de Recintos
+            Módulo 2: Eventos & Fichas de Recinto
           </span>
           <h2 className="text-xl md:text-2xl font-black text-white mt-1">
-            Creación de Evento con Vinculación de Mapa Arquitectónico
+            Gestión de Eventos y Vinculación de Mapas de Asientos
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Enlaza mapas preconfigurados de la biblioteca o personaliza la imagen de fondo conservando palcos, mesas y zonas.
+            Configuración de eventos y vinculación directa de mapas creados para reutilizar entre diferentes fechas.
           </p>
         </div>
       </div>
@@ -212,38 +272,38 @@ export const EventManager: React.FC<EventManagerProps> = ({
         </div>
       )}
 
-      {/* FORMULARIO DE CREACIÓN */}
+      {/* FORMULARIO DE EVENTO */}
       <div className="glass-panel rounded-3xl p-6 space-y-6">
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Nombre del Espectáculo / Gira</label>
+              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Nombre del Evento</label>
               <input
                 type="text"
                 required
                 value={nombre}
                 onChange={(e) => setNombre(e.target.value)}
-                placeholder="Ej. Biotickets Fest 2026"
+                placeholder="Festival o Gira 2026"
                 className="w-full bg-slate-950/80 border border-white/10 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-indigo-500"
               />
             </div>
 
             <div>
-              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">País</label>
+              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">País y Régimen Fiscal</label>
               <select
                 value={pais}
                 onChange={(e) => handlePaisChange(e.target.value)}
                 className="w-full bg-slate-950/80 border border-white/10 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-indigo-500"
               >
-                <option value="España">España (IVA 10%)</option>
+                <option value="España">España (IVA Cultural 10% — UE)</option>
                 <option value="Colombia">Colombia (Ley PULEP 10% + IVA 19%)</option>
                 <option value="México">México</option>
-                <option value="Estados Unidos">Estados Unidos (USD)</option>
+                <option value="Estados Unidos">Estados Unidos</option>
               </select>
             </div>
 
             <div>
-              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Ciudad y Sede</label>
+              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Ciudad</label>
               <input
                 type="text"
                 required
@@ -254,7 +314,7 @@ export const EventManager: React.FC<EventManagerProps> = ({
             </div>
 
             <div>
-              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Lugar / Estadio / Recinto</label>
+              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Recinto / Estadio / Arena</label>
               <input
                 type="text"
                 required
@@ -265,7 +325,7 @@ export const EventManager: React.FC<EventManagerProps> = ({
             </div>
 
             <div>
-              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Fecha y Hora</label>
+              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Fecha y Hora de Inicio</label>
               <input
                 type="datetime-local"
                 required
@@ -276,7 +336,7 @@ export const EventManager: React.FC<EventManagerProps> = ({
             </div>
 
             <div>
-              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Promotor Responsable</label>
+              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Promotor / Organización</label>
               <select
                 value={promotorId}
                 onChange={(e) => setPromotorId(parseInt(e.target.value))}
@@ -292,7 +352,7 @@ export const EventManager: React.FC<EventManagerProps> = ({
           </div>
 
           {/* ======================================================== */}
-          {/* CASILLA INTERACTIVA: MAPAS DISPONIBLES Y VINCULACIÓN */}
+          {/* CASILLA VISIBLE: MAPAS DISPONIBLES EN LA BIBLIOTECA      */}
           {/* ======================================================== */}
           <div className="p-5 rounded-3xl bg-slate-950/90 border border-indigo-500/30 space-y-4">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-white/10 pb-3">
@@ -303,7 +363,7 @@ export const EventManager: React.FC<EventManagerProps> = ({
                     Casilla de Mapas Disponibles en la Biblioteca
                   </h3>
                   <span className="text-[11px] text-slate-400">
-                    Selecciona un mapa maestro para enlazar a este evento. Puedes conservar la configuración de palcos y cambiar la imagen o precios.
+                    Selecciona un mapa para enlazar a este evento. Puedes cambiar la imagen de fondo manteniendo los palcos y zonas, y ajustar los precios.
                   </span>
                 </div>
               </div>
@@ -312,7 +372,7 @@ export const EventManager: React.FC<EventManagerProps> = ({
               </span>
             </div>
 
-            {/* Catálogo de Mapas con Ficha Técnica y Comentarios */}
+            {/* Listado de Mapas Disponibles */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {plantillas.map((plan) => {
                 const esActivo = plantillaSeleccionada?.id === plan.id;
@@ -340,20 +400,18 @@ export const EventManager: React.FC<EventManagerProps> = ({
                           setPlantillaEnPreview(plan);
                           setModalPreviewAbierto(true);
                         }}
-                        className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition flex items-center gap-1"
-                        title="Ver previsualización gráfica completa"
+                        className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition flex items-center gap-1 cursor-pointer"
+                        title="Ver previsualización gráfica"
                       >
                         <Eye className="w-3.5 h-3.5 text-sky-400" />
                         <span>Vista Previa</span>
                       </button>
                     </div>
 
-                    {/* Comentarios del Recinto */}
                     <div className="p-2.5 rounded-xl bg-slate-950/70 border border-white/5 text-[11px] text-slate-300 italic">
                       "{plan.comentarios}"
                     </div>
 
-                    {/* Características y Cuadrícula de Aforo */}
                     <div className="grid grid-cols-4 gap-1.5 text-center text-xs pt-1">
                       <div className="p-2 rounded-xl bg-slate-950 border border-white/5">
                         <span className="text-[9px] uppercase text-slate-400 font-bold block">Aforo</span>
@@ -376,7 +434,7 @@ export const EventManager: React.FC<EventManagerProps> = ({
                     {esActivo && (
                       <div className="flex items-center gap-1.5 text-emerald-400 text-xs font-bold pt-1">
                         <CheckCircle2 className="w-4 h-4" />
-                        <span>Mapa Enlazado a este Evento</span>
+                        <span>Mapa Seleccionado y Vinculado a este Evento</span>
                       </div>
                     )}
                   </div>
@@ -384,11 +442,11 @@ export const EventManager: React.FC<EventManagerProps> = ({
               })}
             </div>
 
-            {/* Opciones de Ajuste de Fondo y Precios para este Evento */}
+            {/* Ajustes Específicos para este Evento */}
             {plantillaSeleccionada && (
               <div className="p-4 rounded-2xl bg-indigo-950/30 border border-indigo-500/20 space-y-3 pt-3">
                 <span className="text-xs font-bold text-indigo-300 block">
-                  Personalización para este Espectáculo (Manteniendo las zonas y palcos):
+                  Ajustes para este Evento (Manteniendo las zonas y palcos):
                 </span>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
                   <div>
@@ -405,20 +463,18 @@ export const EventManager: React.FC<EventManagerProps> = ({
                   </div>
                   <div>
                     <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
-                      Factor de Ajuste de Precios de las Entradas:
+                      Ajuste Rápido de Precios en Todas las Localidades:
                     </label>
-                    <div className="flex items-center gap-2">
-                      <select
-                        value={multiplicadorPrecios}
-                        onChange={(e) => setMultiplicadorPrecios(parseFloat(e.target.value))}
-                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2.5 text-white font-bold text-xs"
-                      >
-                        <option value={1.0}>Mantener Precios Originales del Mapa</option>
-                        <option value={1.1}>Aumentar un +10% en todas las localidades</option>
-                        <option value={1.2}>Aumentar un +20% en todas las localidades</option>
-                        <option value={0.85}>Reducir un -15% (Evento Promocional)</option>
-                      </select>
-                    </div>
+                    <select
+                      value={multiplicadorPrecios}
+                      onChange={(e) => setMultiplicadorPrecios(parseFloat(e.target.value))}
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl p-2.5 text-white font-bold text-xs"
+                    >
+                      <option value={1.0}>Mantener Precios Originales del Mapa</option>
+                      <option value={1.1}>Aumentar un +10% en todas las localidades</option>
+                      <option value={1.2}>Aumentar un +20% en todas las localidades</option>
+                      <option value={0.85}>Reducir un -15% (Evento Promocional)</option>
+                    </select>
                   </div>
                 </div>
               </div>
@@ -432,13 +488,13 @@ export const EventManager: React.FC<EventManagerProps> = ({
               className="px-8 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/25 transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
             >
               <Plus className="w-4 h-4" />
-              <span>Publicar Evento y Asignar Mapa</span>
+              <span>Crear y Publicar Evento</span>
             </button>
           </div>
         </form>
       </div>
 
-      {/* MODAL DE PREVISUALIZACIÓN RÁPIDA DE PLANTILLA */}
+      {/* MODAL DE PREVISUALIZACIÓN DE PLANO */}
       {modalPreviewAbierto && plantillaEnPreview && (
         <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-white/10 rounded-3xl p-6 max-w-3xl w-full space-y-4 shadow-2xl animate-fadeIn">
@@ -451,13 +507,12 @@ export const EventManager: React.FC<EventManagerProps> = ({
               </div>
               <button
                 onClick={() => setModalPreviewAbierto(false)}
-                className="text-slate-400 hover:text-white p-1 rounded-xl"
+                className="text-slate-400 hover:text-white p-1 rounded-xl cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Imagen y Características */}
             <div className="space-y-3">
               <div className="relative aspect-video rounded-2xl overflow-hidden border border-white/10 bg-slate-950 flex items-center justify-center">
                 <img
@@ -494,7 +549,7 @@ export const EventManager: React.FC<EventManagerProps> = ({
             <div className="flex justify-end gap-2 pt-2 border-t border-white/10">
               <button
                 onClick={() => setModalPreviewAbierto(false)}
-                className="px-4 py-2 rounded-xl bg-white/10 text-white font-bold text-xs"
+                className="px-4 py-2 rounded-xl bg-white/10 text-white font-bold text-xs cursor-pointer"
               >
                 Cerrar
               </button>
@@ -503,7 +558,7 @@ export const EventManager: React.FC<EventManagerProps> = ({
                   setPlantillaSeleccionada(plantillaEnPreview);
                   setModalPreviewAbierto(false);
                 }}
-                className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5"
+                className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer"
               >
                 <Check className="w-4 h-4" />
                 <span>Usar este Mapa</span>
@@ -513,7 +568,7 @@ export const EventManager: React.FC<EventManagerProps> = ({
         </div>
       )}
 
-      {/* LISTADO DE EVENTOS ACTUALES */}
+      {/* EVENTOS ACTIVOS */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {eventos.map((ev) => (
           <div
@@ -544,7 +599,7 @@ export const EventManager: React.FC<EventManagerProps> = ({
                   onEliminarEvento(ev.id);
                 }
               }}
-              className="p-2.5 rounded-2xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 transition"
+              className="p-2.5 rounded-2xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 transition cursor-pointer"
               title="Eliminar evento"
             >
               <Trash2 className="w-4 h-4" />
