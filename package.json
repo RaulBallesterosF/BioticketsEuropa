@@ -1,7 +1,7 @@
 {
   "name": "bioticketseuropa",
   "private": true,
-  "version": "3.0.0",
+  "version": "4.0.0",
   "type": "module",
   "main": "server.js",
   "scripts": {
