@@ -59,7 +59,7 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [herramienta, setHerramienta] = useState<'seleccionar' | 'pan'>('seleccionar');
-  const [hoveredItem, setHoveredItem] = useState<{ nombre: string; precio: number; disponible: boolean } | null>(null);
+  const [hoveredItem, setHoveredItem] = useState<{ nombre: string; numero: string; precio: number; disponible: boolean } | null>(null);
 
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
@@ -79,17 +79,28 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
     };
   }, [mapa.imagenFondo]);
 
-  const toVirtualCoords = (clientX: number, clientY: number) => {
+  // CORRECCIÓN MATEMÁTICA DE PRECISIÓN 1:1
+  const getCanvasMousePos = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
     return {
-      x: (clientX - rect.left - pan.x) / zoom,
-      y: (clientY - rect.top - pan.y) / zoom,
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY,
     };
   };
 
-  // Renderizado de Taquilla con Overlay Transparente
+  const toVirtualCoords = (clientX: number, clientY: number) => {
+    const { x, y } = getCanvasMousePos(clientX, clientY);
+    return {
+      x: (x - pan.x) / zoom,
+      y: (y - pan.y) / zoom,
+    };
+  };
+
+  // Renderizado de Taquilla con Overlay Transparente y Números Limpios
   const renderizarTaquilla = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -113,10 +124,10 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
 
     // 1. Imagen Original del Recinto (Siempre visible en alta resolución)
     if (imgFondoRef.current) {
-      ctx.drawImage(imgFondoRef.current, 0, 0, 1400, 950);
+      ctx.drawImage(imgFondoRef.current, 0, 0, 1600, 1000);
     }
 
-    // 2. Palcos VIP con Estados Cromáticos Solicitados
+    // 2. Palcos VIP con Estados Cromáticos y SOLO NÚMERO
     if (mapa.palcos && mapa.palcos.length > 0) {
       mapa.palcos.forEach((p) => {
         const px = p.x || 100;
@@ -148,30 +159,23 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
           // TRANSPARENTE: Disponible (Permite ver el mapa original debajo)
           ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
           ctx.strokeStyle = (p as any).color || 'rgba(255, 255, 255, 0.45)';
-          ctx.lineWidth = 1.5;
+          ctx.lineWidth = 1.8;
         }
 
         ctx.fill();
         ctx.stroke();
 
-        // Texto informativo del palco
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 10px system-ui, sans-serif';
+        // EN EL MAPA SALE ÚNICAMENTE EL NÚMERO DE LA LOCALIDAD
+        ctx.fillStyle = noDisponible ? '#94a3b8' : '#ffffff';
+        ctx.font = 'bold 22px system-ui, sans-serif';
         ctx.textAlign = 'center';
-        const titulo = (p as any).numero ? `${p.nombre} #${(p as any).numero}` : p.nombre;
-        ctx.fillText(titulo, px + pw / 2, py + 20);
-
-        ctx.font = 'bold 9px monospace';
-        ctx.fillStyle = noDisponible ? '#94a3b8' : esSeleccionado ? '#ffffff' : '#e2e8f0';
-        ctx.fillText(
-          noDisponible ? 'NO DISPONIBLE' : `${p.capacidad}p - ${p.precioPalcoBase} ${evento.moneda}`,
-          px + pw / 2,
-          py + ph - 14
-        );
+        ctx.textBaseline = 'middle';
+        const numMostrar = (p as any).numero || p.id.replace(/\D/g, '') || '1';
+        ctx.fillText(numMostrar, px + pw / 2, py + ph / 2);
 
         ctx.restore();
 
-        // Registro de área de clic
+        // Registro del objetivo de clic
         targetsRef.current.push({
           x: px,
           y: py,
@@ -181,7 +185,7 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
           esVendido: noDisponible,
           asiento: {
             id: palcoId,
-            numero: titulo,
+            numero: `${p.nombre} #${numMostrar}`,
             tipo: 'PALCO',
             precioBase: p.precioPalcoBase,
             palcoId: p.id,
@@ -216,9 +220,10 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
         ctx.stroke();
 
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 11px system-ui, sans-serif';
+        ctx.font = 'bold 16px system-ui, sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(`${z.nombre} - ${z.precioBase} ${evento.moneda}`, z.x + z.ancho / 2, z.y + z.alto / 2 + 4);
+        ctx.textBaseline = 'middle';
+        ctx.fillText(z.nombre.replace(/\D/g, '') || 'Z', z.x + z.ancho / 2, z.y + z.alto / 2);
         ctx.restore();
 
         targetsRef.current.push({
@@ -230,7 +235,7 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
           esVendido: false,
           asiento: {
             id: `${zonaTicketId}-${Date.now().toString().slice(-4)}`,
-            numero: `${z.nombre} (Entrada de Pie)`,
+            numero: `${z.nombre}`,
             tipo: 'ZONA_PIE',
             precioBase: z.precioBase,
             zonaId: z.id,
@@ -250,13 +255,13 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (herramienta === 'pan' || e.button === 1) {
       isDraggingRef.current = true;
-      dragStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+      const { x: cx, y: cy } = getCanvasMousePos(e.clientX, e.clientY);
+      dragStartRef.current = { x: cx - pan.x, y: cy - pan.y };
       return;
     }
 
     const { x, y } = toVirtualCoords(e.clientX, e.clientY);
 
-    // Búsqueda de clic en objetivos registrados
     for (const t of targetsRef.current) {
       if (x >= t.x && x <= t.x + t.ancho && y >= t.y && y <= t.y + t.alto) {
         if (!t.esVendido) {
@@ -269,9 +274,10 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (herramienta === 'pan' && isDraggingRef.current) {
+      const { x: cx, y: cy } = getCanvasMousePos(e.clientX, e.clientY);
       setPan({
-        x: e.clientX - dragStartRef.current.x,
-        y: e.clientY - dragStartRef.current.y,
+        x: cx - dragStartRef.current.x,
+        y: cy - dragStartRef.current.y,
       });
       return;
     }
@@ -283,6 +289,7 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
       if (x >= t.x && x <= t.x + t.ancho && y >= t.y && y <= t.y + t.alto) {
         setHoveredItem({
           nombre: t.asiento.numero,
+          numero: t.asiento.id,
           precio: t.asiento.precioBase,
           disponible: !t.esVendido,
         });
@@ -310,9 +317,9 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Barra de Herramientas de Navegación Fan */}
+      {/* Barra de Herramientas Fan */}
       <div className="glass-panel p-3.5 rounded-3xl border border-white/10 flex flex-wrap justify-between items-center gap-3">
-        {/* Leyenda de Estados Solicitada */}
+        {/* Leyenda de Estados */}
         <div className="flex items-center gap-4 text-xs font-bold">
           <div className="flex items-center gap-1.5">
             <span className="w-3.5 h-3.5 rounded-md border border-white/40 bg-white/5"></span>
@@ -328,31 +335,31 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
           </div>
         </div>
 
-        {/* Controles de Zoom y Movimiento */}
+        {/* Controles Zoom y Desplazamiento */}
         <div className="flex items-center bg-slate-900 border border-white/10 rounded-2xl p-1 gap-1">
           <button
             onClick={() => setHerramienta('seleccionar')}
-            className={`p-1.5 rounded-xl text-xs font-bold transition ${
+            className={`p-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
               herramienta === 'seleccionar' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
             }`}
-            title="Seleccionar Asiento"
+            title="Seleccionar"
           >
             <MousePointer className="w-4 h-4" />
           </button>
           <button
             onClick={() => setHerramienta('pan')}
-            className={`p-1.5 rounded-xl text-xs font-bold transition ${
+            className={`p-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
               herramienta === 'pan' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
             }`}
             title="Mover Plano"
           >
             <Hand className="w-4 h-4" />
           </button>
-          <button onClick={() => setZoom((z) => Math.max(0.4, Number((z - 0.15).toFixed(2))))} className="p-1.5 text-slate-400 hover:text-white">
+          <button onClick={() => setZoom((z) => Math.max(0.4, Number((z - 0.15).toFixed(2))))} className="p-1.5 text-slate-400 hover:text-white cursor-pointer">
             <ZoomOut className="w-4 h-4" />
           </button>
           <span className="text-xs font-mono font-bold text-white px-1">{Math.round(zoom * 100)}%</span>
-          <button onClick={() => setZoom((z) => Math.min(2.5, Number((z + 0.15).toFixed(2))))} className="p-1.5 text-slate-400 hover:text-white">
+          <button onClick={() => setZoom((z) => Math.min(2.5, Number((z + 0.15).toFixed(2))))} className="p-1.5 text-slate-400 hover:text-white cursor-pointer">
             <ZoomIn className="w-4 h-4" />
           </button>
         </div>
@@ -371,8 +378,8 @@ export const SeatMapCanvas: React.FC<SeatMapCanvasProps> = ({
 
         <canvas
           ref={canvasRef}
-          width={1400}
-          height={950}
+          width={1600}
+          height={1000}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
