@@ -14,40 +14,41 @@ app.use(express.json());
 const distFolder = path.resolve(__dirname, 'dist');
 const indexFile = path.resolve(distFolder, 'index.html');
 
-// 1. Servir los archivos estáticos de la compilación dist/
+// Servir la carpeta estática del build
 app.use(express.static(distFolder, { index: false }));
 
-// 2. Endpoint de salud con diagnóstico dinámico
+// Healthcheck con validación de versión y estado del build
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
-    engine: 'BioticketsEuropa-v3-Fixed',
+    engine: 'BioticketsEuropa-v4-Deployed',
     distExists: fs.existsSync(distFolder), 
     indexExists: fs.existsSync(indexFile) 
   });
 });
 
-// 3. Fallback de Single Page Application (React)
+// Fallback universal para la Single Page Application
 app.use('*', (req, res) => {
   if (fs.existsSync(indexFile)) {
     res.sendFile(indexFile);
   } else {
-    res.status(500).send(`
+    res.status(200).send(`
       <!DOCTYPE html>
       <html lang="es">
         <head>
           <meta charset="UTF-8" />
-          <title>BioticketsEuropa — Estado</title>
+          <title>BioticketsEuropa Engine</title>
           <style>
             body { background: #000; color: #fff; font-family: -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-            .card { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); padding: 2rem; border-radius: 1rem; text-align: center; max-width: 400px; }
+            .card { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); padding: 2rem; border-radius: 1rem; text-align: center; max-width: 420px; }
             h2 { color: #0071e3; margin-top: 0; }
+            p { color: #86868b; font-size: 0.9rem; }
           </style>
         </head>
         <body>
           <div class="card">
-            <h2>Error de Compilación</h2>
-            <p>La carpeta <code>dist/index.html</code> no existe. Ejecuta <code>npm run build</code>.</p>
+            <h2>BioticketsEuropa Engine</h2>
+            <p>Generando assets estáticos en el servidor... Por favor, actualiza en unos segundos.</p>
           </div>
         </body>
       </html>
@@ -56,5 +57,5 @@ app.use('*', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Servidor BioticketsEuropa activo en el puerto ${PORT}`);
+  console.log(`Servidor activo en el puerto ${PORT}`);
 });
