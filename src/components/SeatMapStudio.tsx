@@ -43,6 +43,11 @@ import {
   Check,
   X,
   AlertCircle,
+  Armchair,
+  Circle,
+  Square,
+  Hexagon,
+  Octagon,
 } from 'lucide-react';
 
 interface SeatMapStudioProps {
@@ -52,6 +57,9 @@ interface SeatMapStudioProps {
   onActualizarEvento?: (cambios: Partial<Evento>) => Promise<void>;
   onCambiarTab?: (tab: string) => void;
 }
+
+export type DisposicionSillasMesa = 'ALREDEDOR' | 'FRONTAL' | 'LATERALES' | 'HERRADURA';
+export type FormaMesaExtendida = FormaMesa | 'RECTANGULAR';
 
 export interface EsquemaTarifario {
   preventa: number;
@@ -68,6 +76,7 @@ export interface EsquemaTarifario {
 export interface PalcoStudio extends PalcoVIP {
   numero?: string;
   color?: string;
+  isSillaSuelta?: boolean;
   tarifas?: EsquemaTarifario;
 }
 
@@ -76,10 +85,13 @@ export interface MesaStudio extends MesaEspecial {
   color?: string;
   ancho?: number;
   alto?: number;
+  forma: FormaMesaExtendida;
+  disposicionSillas?: DisposicionSillasMesa;
   tarifas?: EsquemaTarifario;
 }
 
 export interface ZonaStudio extends ZonaDePie {
+  numero?: string;
   tarifas?: EsquemaTarifario;
 }
 
@@ -92,10 +104,10 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
   onActualizarEvento,
   onCambiarTab,
 }) => {
-  // Modo de visualización: 'editor' (herramientas) o 'preview' (vista previa del comprador)
+  // Modo de visualización: 'editor' (edición con controles) o 'preview' (vista de comprador fan)
   const [modoVista, setModoVista] = useState<'editor' | 'preview'>('editor');
 
-  // Metadatos y dimensiones de la imagen de fondo
+  // Metadatos y Fondo
   const [nombreMapa, setNombreMapa] = useState<string>(`Plano Oficial - ${evento.lugar}`);
   const [imagenFondo, setImagenFondo] = useState(mapaActual.imagenFondo || '');
   const [bgPos, setBgPos] = useState({ x: 0, y: 0 });
@@ -104,35 +116,48 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     mapaActual.imagenFondoOpacidad !== undefined ? mapaActual.imagenFondoOpacidad : 0.75
   );
 
-  // Elementos del mapa
+  // Elementos del recinto
   const [palcos, setPalcos] = useState<PalcoStudio[]>((mapaActual.palcos || []) as PalcoStudio[]);
   const [mesas, setMesas] = useState<MesaStudio[]>((mapaActual.mesas || []) as MesaStudio[]);
   const [zonasDePie, setZonasDePie] = useState<ZonaStudio[]>((mapaActual.zonasDePie || []) as ZonaStudio[]);
   const [filas, setFilas] = useState<FilaAsientos[]>(mapaActual.filas || []);
 
-  // Elemento seleccionado en el lienzo
-  const [elementoSel, setElementoSel] = useState<{ tipo: 'palco' | 'mesa' | 'zona'; id: string } | null>(null);
+  // Referencias mutables para evitar lag en el arrastre
+  const palcosRef = useRef(palcos);
+  const mesasRef = useRef(mesas);
+  const zonasRef = useRef(zonasDePie);
+  useEffect(() => { palcosRef.current = palcos; }, [palcos]);
+  useEffect(() => { mesasRef.current = mesas; }, [mesas]);
+  useEffect(() => { zonasRef.current = zonasDePie; }, [zonasDePie]);
 
-  // Selección en la previsualización fan
+  // Selección activa
+  const [elementoSel, setElementoSel] = useState<{ tipo: 'palco' | 'mesa' | 'zona'; id: string } | null>(null);
   const [previewSeleccionados, setPreviewSeleccionados] = useState<string[]>([]);
 
-  // Navegación Canvas: Zoom y Panning
+  // Herramientas y Navegación
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [herramienta, setHerramienta] = useState<'seleccionar' | 'pan' | 'dibujar_palco' | 'dibujar_zona' | 'dibujar_mesa'>('seleccionar');
+  const [herramienta, setHerramienta] = useState<'seleccionar' | 'pan' | 'palco' | 'mesa' | 'silla' | 'zona'>('seleccionar');
 
-  // Pestañas del panel izquierdo
-  const [tabSidebar, setTabSidebar] = useState<'elementos' | 'fondo' | 'tarifas'>('elementos');
+  // Ajustes predeterminados para nuevas mesas
+  const [formaMesaNueva, setFormaMesaNueva] = useState<FormaMesaExtendida>('REDONDA');
+  const [disposicionSillasNueva, setDisposicionSillasNueva] = useState<DisposicionSillasMesa>('ALREDEDOR');
+  const [sillasMesaNueva, setSillasMesaNueva] = useState<number>(6);
+
+  // Ajustes predeterminados para nuevas sillas sueltas
+  const [sillasSueltasCantidad, setSillasSueltasCantidad] = useState<number>(1);
+  const [sillasSueltasPrecio, setSillasSueltasPrecio] = useState<number>(50.0);
+
+  // Pestaña lateral
+  const [tabSidebar, setTabSidebar] = useState<'herramientas' | 'fondo' | 'tarifas'>('herramientas');
 
   // Estados de retroalimentación
   const [guardando, setGuardando] = useState(false);
   const [guardadoExito, setGuardadoExito] = useState(false);
   const [mensajeNotif, setMensajeNotif] = useState<string | null>(null);
-
-  // Modal para carga de archivo plano CSV/TXT
   const [modalCsvAbierto, setModalCsvAbierto] = useState(false);
 
-  // Referencias para Canvas y sincronización 1:1 de puntero
+  // Referencias para Canvas y puntero
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imgFondoRef = useRef<HTMLImageElement | null>(null);
   const isDraggingRef = useRef(false);
@@ -147,9 +172,9 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     setTimeout(() => setMensajeNotif(null), 4000);
   };
 
-  // 1. INICIAR LIENZO EN BLANCO TOTAL (SOLO CUADRÍCULA)
+  // 1. Iniciar mapa en blanco desde cero (Solo cuadrícula)
   const handleNuevoMapaEnBlanco = () => {
-    if (window.confirm('¿Deseas iniciar un lienzo completamente en blanco? Se limpiarán todos los elementos actuales.')) {
+    if (window.confirm('¿Deseas iniciar un lienzo completamente en blanco? Se limpiará todo el mapa actual.')) {
       setPalcos([]);
       setMesas([]);
       setZonasDePie([]);
@@ -160,11 +185,11 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       setPreviewSeleccionados([]);
       setPan({ x: 0, y: 0 });
       setZoom(1);
-      notificar('Lienzo en blanco inicializado. Solo cuadrícula visible.');
+      notificar('Lienzo en blanco inicializado con éxito.');
     }
   };
 
-  // Carga de imagen de fondo
+  // Precarga de imagen
   useEffect(() => {
     if (!imagenFondo) {
       imgFondoRef.current = null;
@@ -175,32 +200,28 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     img.src = imagenFondo;
     img.onload = () => {
       imgFondoRef.current = img;
+      if (bgSize.w === 1600 && img.naturalWidth > 0) {
+        setBgSize({ w: img.naturalWidth, h: img.naturalHeight });
+      }
       renderizar();
     };
   }, [imagenFondo]);
 
-  // CORRECCIÓN MATEMÁTICA DE SINCRONIZACIÓN DE RATÓN 1:1
-  const getCanvasMousePos = (clientX: number, clientY: number) => {
+  // CORRECCIÓN MATEMÁTICA ESTRICTA 1:1 DE COORDENADAS
+  const toVirtualCoords = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
+    const canvasInternalX = (clientX - rect.left) * scaleX;
+    const canvasInternalY = (clientY - rect.top) * scaleY;
     return {
-      x: (clientX - rect.left) * scaleX,
-      y: (clientY - rect.top) * scaleY,
+      x: (canvasInternalX - pan.x) / zoom,
+      y: (canvasInternalY - pan.y) / zoom,
     };
   };
 
-  const toVirtualCoords = (clientX: number, clientY: number) => {
-    const { x, y } = getCanvasMousePos(clientX, clientY);
-    return {
-      x: (x - pan.x) / zoom,
-      y: (y - pan.y) / zoom,
-    };
-  };
-
-  // Obtener puntos de ancla de redimensionamiento (8 puntos de control estilo Elementor)
   const getHandles = (x: number, y: number, w: number, h: number): Record<PuntoControl, { x: number; y: number }> => {
     return {
       nw: { x, y },
@@ -214,7 +235,27 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     };
   };
 
-  // Renderizado del Canvas
+  // Función para dibujar polígonos regulares en mesas
+  const dibujarPoligono = (
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    cy: number,
+    radio: number,
+    lados: number,
+    rotacionOffset = 0
+  ) => {
+    ctx.beginPath();
+    for (let i = 0; i < lados; i++) {
+      const angulo = (i * 2 * Math.PI) / lados + rotacionOffset;
+      const px = cx + radio * Math.cos(angulo);
+      const py = cy + radio * Math.sin(angulo);
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+  };
+
+  // RENDERIZADOR VECTORIAL DE ALTO RENDIMIENTO
   const renderizar = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -234,7 +275,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     ctx.translate(pan.x, pan.y);
     ctx.scale(zoom, zoom);
 
-    // 1. Cuadrícula arquitectónica base
+    // 1. Cuadrícula arquitectónica milimétrica
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
     ctx.lineWidth = 1 / zoom;
     for (let x = -1000; x < 2600; x += 40) {
@@ -250,7 +291,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       ctx.stroke();
     }
 
-    // 2. Imagen del plano arquitectónico calibrable
+    // 2. Imagen del plano de fondo calibrable
     if (imgFondoRef.current) {
       ctx.save();
       ctx.globalAlpha = imagenFondoOpacidad;
@@ -267,7 +308,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     }
 
     // 3. Renderizar Zonas de Pie
-    zonasDePie.forEach((z) => {
+    zonasRef.current.forEach((z) => {
       const esSel = elementoSel?.tipo === 'zona' && elementoSel.id === z.id;
       const esPreviewSel = previewSeleccionados.includes(z.id);
 
@@ -283,12 +324,12 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
         } else {
           ctx.fillStyle = 'rgba(255, 255, 255, 0.04)'; // Transparente disponible
           ctx.strokeStyle = z.color || '#38bdf8';
-          ctx.lineWidth = 1.5;
+          ctx.lineWidth = 1.8;
         }
       } else {
         ctx.fillStyle = esSel ? `${z.color || '#38bdf8'}55` : `${z.color || '#38bdf8'}26`;
         ctx.strokeStyle = esSel ? '#ffffff' : z.color || '#38bdf8';
-        ctx.lineWidth = esSel ? 3 : 1.5;
+        ctx.lineWidth = esSel ? 3 : 1.8;
       }
 
       ctx.fill();
@@ -296,9 +337,11 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
 
       // En el mapa: solo el número identificador
       ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 16px system-ui, sans-serif';
+      ctx.font = 'bold 18px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(z.nombre.replace(/\D/g, '') || 'Z', z.x + z.ancho / 2, z.y + z.alto / 2 + 6);
+      ctx.textBaseline = 'middle';
+      const numZona = z.numero || z.nombre.replace(/\D/g, '') || 'Z';
+      ctx.fillText(numZona, z.x + z.ancho / 2, z.y + z.alto / 2);
       ctx.restore();
 
       if (modoVista === 'editor' && esSel) {
@@ -306,27 +349,31 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       }
     });
 
-    // 4. Renderizar Palcos VIP (SOLO EL NÚMERO CENTRADO)
-    palcos.forEach((p) => {
+    // 4. Renderizar Palcos y Sillas Sueltas (SOLO NÚMERO CENTRADO)
+    palcosRef.current.forEach((p) => {
       const px = p.x || 100;
       const py = p.y || 100;
-      const pw = p.ancho || 150;
-      const ph = p.alto || 85;
-      const colorPalco = p.color || '#eab308';
+      const pw = p.ancho || (p.isSillaSuelta ? 34 : 150);
+      const ph = p.alto || (p.isSillaSuelta ? 34 : 85);
+      const colorPalco = p.color || (p.isSillaSuelta ? '#38bdf8' : '#eab308');
       const esSel = elementoSel?.tipo === 'palco' && elementoSel.id === p.id;
       const esPreviewSel = previewSeleccionados.includes(p.id);
 
       ctx.save();
       ctx.beginPath();
-      ctx.roundRect(px, py, pw, ph, 8);
+      if (p.isSillaSuelta) {
+        ctx.arc(px + pw / 2, py + ph / 2, pw / 2, 0, Math.PI * 2);
+      } else {
+        ctx.roundRect(px, py, pw, ph, 8);
+      }
 
       if (modoVista === 'preview') {
         if (esPreviewSel) {
-          ctx.fillStyle = 'rgba(16, 185, 129, 0.75)'; // Verde brillante: Selección
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.75)'; // Verde brillante selección fan
           ctx.strokeStyle = '#10b981';
           ctx.lineWidth = 3;
         } else {
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.04)'; // Transparente: Disponible
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.04)'; // Transparente disponible
           ctx.strokeStyle = colorPalco;
           ctx.lineWidth = 1.8;
         }
@@ -341,11 +388,11 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
 
       // EN EL MAPA SALE ÚNICAMENTE EL NÚMERO
       ctx.fillStyle = modoVista === 'preview' && esPreviewSel ? '#ffffff' : colorPalco;
-      ctx.font = 'bold 22px system-ui, sans-serif';
+      ctx.font = p.isSillaSuelta ? 'bold 12px system-ui, sans-serif' : 'bold 22px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      const numeroMostrar = p.numero || p.id.replace(/\D/g, '') || '1';
-      ctx.fillText(numeroMostrar, px + pw / 2, py + ph / 2);
+      const numMostrar = p.numero || p.id.replace(/\D/g, '') || '1';
+      ctx.fillText(numMostrar, px + pw / 2, py + ph / 2);
       ctx.restore();
 
       if (modoVista === 'editor' && esSel) {
@@ -353,8 +400,8 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       }
     });
 
-    // 5. Renderizar Mesas (SOLO EL NÚMERO CENTRADO)
-    mesas.forEach((m) => {
+    // 5. Renderizar Mesas con sus Formas y Sillas en Posición Real
+    mesasRef.current.forEach((m) => {
       const mx = m.x || 300;
       const my = m.y || 300;
       const mw = m.ancho || 90;
@@ -362,13 +409,25 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       const colorMesa = m.color || '#6366f1';
       const esSel = elementoSel?.tipo === 'mesa' && elementoSel.id === m.id;
       const esPreviewSel = previewSeleccionados.includes(m.id);
+      const radioMesa = mw / 2;
 
       ctx.save();
       ctx.beginPath();
-      if (m.forma === 'CUADRADA') {
-        ctx.roundRect(mx, my, mw, mh, 8);
-      } else {
-        ctx.ellipse(mx + mw / 2, my + mh / 2, mw / 2, mh / 2, 0, 0, Math.PI * 2);
+      switch (m.forma) {
+        case 'CUADRADA':
+        case 'RECTANGULAR':
+          ctx.roundRect(mx, my, mw, mh, 8);
+          break;
+        case 'HEXAGONAL':
+          dibujarPoligono(ctx, mx + mw / 2, my + mh / 2, radioMesa, 6, Math.PI / 6);
+          break;
+        case 'OCTOGONAL':
+          dibujarPoligono(ctx, mx + mw / 2, my + mh / 2, radioMesa, 8, Math.PI / 8);
+          break;
+        case 'REDONDA':
+        default:
+          ctx.ellipse(mx + mw / 2, my + mh / 2, mw / 2, mh / 2, 0, 0, Math.PI * 2);
+          break;
       }
 
       if (modoVista === 'preview') {
@@ -390,14 +449,69 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       ctx.fill();
       ctx.stroke();
 
-      // EN EL MAPA SALE ÚNICAMENTE EL NÚMERO
+      // NÚMERO DE LA MESA EN EL CENTRO
       ctx.fillStyle = '#ffffff';
       ctx.font = 'bold 18px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      const numeroMesa = m.numero || m.id.replace(/\D/g, '') || '1';
-      ctx.fillText(numeroMesa, mx + mw / 2, my + mh / 2);
+      const numMesa = m.numero || m.id.replace(/\D/g, '') || '1';
+      ctx.fillText(numMesa, mx + mw / 2, my + mh / 2);
       ctx.restore();
+
+      // RENDERIZAR SILLAS ALREDEDOR/DISPOSICIÓN DE LA MESA
+      const totalSillas = m.sillas || 4;
+      const disp = m.disposicionSillas || 'ALREDEDOR';
+      const radSilla = 6;
+
+      for (let s = 0; s < totalSillas; s++) {
+        let sx = 0;
+        let sy = 0;
+
+        if (disp === 'FRONTAL') {
+          // Alineadas abajo mirando al escenario
+          const spacing = mw / (totalSillas + 1);
+          sx = mx + spacing * (s + 1);
+          sy = my + mh + 12;
+        } else if (disp === 'LATERALES') {
+          // Banquete: mitad izquierda, mitad derecha
+          const mitad = Math.ceil(totalSillas / 2);
+          if (s < mitad) {
+            const spacing = mh / (mitad + 1);
+            sx = mx - 12;
+            sy = my + spacing * (s + 1);
+          } else {
+            const spacing = mh / (totalSillas - mitad + 1);
+            sx = mx + mw + 12;
+            sy = my + spacing * (s - mitad + 1);
+          }
+        } else if (disp === 'HERRADURA') {
+          // Arriba y laterales en U
+          const ang = (s * Math.PI) / (totalSillas - 1 || 1) + Math.PI;
+          sx = mx + mw / 2 + Math.cos(ang) * (radioMesa + 14);
+          sy = my + mh / 2 + Math.sin(ang) * (radioMesa + 14);
+        } else {
+          // ALREDEDOR 360°
+          const ang = (s * 2 * Math.PI) / totalSillas - Math.PI / 2;
+          sx = mx + mw / 2 + Math.cos(ang) * (radioMesa + 14);
+          sy = my + mh / 2 + Math.sin(ang) * (radioMesa + 14);
+        }
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(sx, sy, radSilla, 0, Math.PI * 2);
+        ctx.fillStyle = '#0f172a';
+        ctx.strokeStyle = colorMesa;
+        ctx.lineWidth = 1.2;
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 7px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`${s + 1}`, sx, sy);
+        ctx.restore();
+      }
 
       if (modoVista === 'editor' && esSel) {
         dibujarHandles(ctx, mx, my, mw, mh);
@@ -428,9 +542,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     imagenFondoOpacidad,
     bgPos,
     bgSize,
-    palcos,
-    mesas,
-    zonasDePie,
     elementoSel,
     previewSeleccionados,
     zoom,
@@ -439,7 +550,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     evento.moneda,
   ]);
 
-  // Dibujar puntos de ancla de redimensionamiento estilo Elementor
   const dibujarHandles = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) => {
     const handles = getHandles(x, y, w, h);
     const size = 9 / zoom;
@@ -463,9 +573,8 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
 
   useEffect(() => {
     renderizar();
-  }, [renderizar]);
+  }, [renderizar, palcos, mesas, zonasDePie]);
 
-  // Detección de colisión con los 8 puntos de control
   const detectarPuntoControl = (
     mx: number,
     my: number,
@@ -485,17 +594,18 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     return null;
   };
 
-  // Eventos de Ratón sincronizados
-  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  // MANEJO DE POINTER EVENTS CON CAPTURA TOTAL DE PUNTERO
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
     const { x, y } = toVirtualCoords(e.clientX, e.clientY);
 
-    // Modo Previsualizador Fan (prueba de selección 1:1)
+    // Modo Previsualizador Fan
     if (modoVista === 'preview') {
-      for (const p of [...palcos].reverse()) {
+      for (const p of [...palcosRef.current].reverse()) {
         const px = p.x || 0;
         const py = p.y || 0;
-        const pw = p.ancho || 150;
-        const ph = p.alto || 85;
+        const pw = p.ancho || (p.isSillaSuelta ? 34 : 150);
+        const ph = p.alto || (p.isSillaSuelta ? 34 : 85);
         if (x >= px && x <= px + pw && y >= py && y <= py + ph) {
           setPreviewSeleccionados((prev) =>
             prev.includes(p.id) ? prev.filter((id) => id !== p.id) : [...prev, p.id]
@@ -503,7 +613,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
           return;
         }
       }
-      for (const z of [...zonasDePie].reverse()) {
+      for (const z of [...zonasRef.current].reverse()) {
         if (x >= z.x && x <= z.x + z.ancho && y >= z.y && y <= z.y + z.alto) {
           setPreviewSeleccionados((prev) =>
             prev.includes(z.id) ? prev.filter((id) => id !== z.id) : [...prev, z.id]
@@ -514,33 +624,32 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       return;
     }
 
-    // Modo Pan (Desplazamiento del lienzo)
+    // Modo Desplazamiento (Pan)
     if (herramienta === 'pan' || e.button === 1) {
       isDraggingRef.current = true;
       dragModeRef.current = null;
-      const { x: cx, y: cy } = getCanvasMousePos(e.clientX, e.clientY);
-      dragStartRef.current = { x: cx - pan.x, y: cy - pan.y };
+      dragStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
       return;
     }
 
-    // Modo Dibujo Directo
-    if (['dibujar_palco', 'dibujar_zona', 'dibujar_mesa'].includes(herramienta)) {
+    // Iniciar dibujo de nueva caja
+    if (['palco', 'mesa', 'silla', 'zona'].includes(herramienta)) {
       drawingBoxRef.current = { startX: x, startY: y, currentX: x, currentY: y };
       renderizar();
       return;
     }
 
-    // Comprobar si se hace clic en un punto de ancla del elemento seleccionado
+    // Comprobar handles del elemento activo
     if (elementoSel) {
       let b = { x: 0, y: 0, w: 0, h: 0 };
       if (elementoSel.tipo === 'palco') {
-        const p = palcos.find((it) => it.id === elementoSel.id);
-        if (p) b = { x: p.x || 0, y: p.y || 0, w: p.ancho || 150, h: p.alto || 85 };
+        const p = palcosRef.current.find((it) => it.id === elementoSel.id);
+        if (p) b = { x: p.x || 0, y: p.y || 0, w: p.ancho || (p.isSillaSuelta ? 34 : 150), h: p.alto || (p.isSillaSuelta ? 34 : 85) };
       } else if (elementoSel.tipo === 'zona') {
-        const z = zonasDePie.find((it) => it.id === elementoSel.id);
+        const z = zonasRef.current.find((it) => it.id === elementoSel.id);
         if (z) b = { x: z.x, y: z.y, w: z.ancho, h: z.alto };
       } else if (elementoSel.tipo === 'mesa') {
-        const m = mesas.find((it) => it.id === elementoSel.id);
+        const m = mesasRef.current.find((it) => it.id === elementoSel.id);
         if (m) b = { x: m.x || 0, y: m.y || 0, w: m.ancho || 90, h: m.alto || 90 };
       }
 
@@ -555,12 +664,12 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       }
     }
 
-    // Detección de selección de elementos
-    for (const p of [...palcos].reverse()) {
+    // Detección de selección de elementos para mover
+    for (const p of [...palcosRef.current].reverse()) {
       const px = p.x || 0;
       const py = p.y || 0;
-      const pw = p.ancho || 150;
-      const ph = p.alto || 85;
+      const pw = p.ancho || (p.isSillaSuelta ? 34 : 150);
+      const ph = p.alto || (p.isSillaSuelta ? 34 : 85);
       if (x >= px && x <= px + pw && y >= py && y <= py + ph) {
         setElementoSel({ tipo: 'palco', id: p.id });
         isDraggingRef.current = true;
@@ -570,7 +679,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       }
     }
 
-    for (const z of [...zonasDePie].reverse()) {
+    for (const z of [...zonasRef.current].reverse()) {
       if (x >= z.x && x <= z.x + z.ancho && y >= z.y && y <= z.y + z.alto) {
         setElementoSel({ tipo: 'zona', id: z.id });
         isDraggingRef.current = true;
@@ -580,7 +689,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       }
     }
 
-    for (const m of [...mesas].reverse()) {
+    for (const m of [...mesasRef.current].reverse()) {
       const mx = m.x || 0;
       const my = m.y || 0;
       const mw = m.ancho || 90;
@@ -597,12 +706,11 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     setElementoSel(null);
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (herramienta === 'pan' && isDraggingRef.current) {
-      const { x: cx, y: cy } = getCanvasMousePos(e.clientX, e.clientY);
       setPan({
-        x: cx - dragStartRef.current.x,
-        y: cy - dragStartRef.current.y,
+        x: e.clientX - dragStartRef.current.x,
+        y: e.clientY - dragStartRef.current.y,
       });
       return;
     }
@@ -617,7 +725,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     }
 
     if (isDraggingRef.current && elementoSel) {
-      // 1. Redimensionamiento por puntos de ancla
+      // 1. Redimensionamiento fluido
       if (dragModeRef.current === 'resize' && activeHandleRef.current) {
         const handle = activeHandleRef.current;
         const b = elementInitialBoundsRef.current;
@@ -629,10 +737,10 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
         let newW = b.w;
         let newH = b.h;
 
-        if (handle.includes('e')) newW = Math.max(30, b.w + dx);
+        if (handle.includes('e')) newW = Math.max(20, b.w + dx);
         if (handle.includes('s')) newH = Math.max(20, b.h + dy);
         if (handle.includes('w')) {
-          const wCalc = Math.max(30, b.w - dx);
+          const wCalc = Math.max(20, b.w - dx);
           newX = b.x + (b.w - wCalc);
           newW = wCalc;
         }
@@ -643,38 +751,43 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
         }
 
         if (elementoSel.tipo === 'palco') {
-          setPalcos((prev) =>
-            prev.map((p) => (p.id === elementoSel.id ? { ...p, x: newX, y: newY, ancho: newW, alto: newH } : p))
+          palcosRef.current = palcosRef.current.map((p) =>
+            p.id === elementoSel.id ? { ...p, x: newX, y: newY, ancho: newW, alto: newH } : p
           );
         } else if (elementoSel.tipo === 'zona') {
-          setZonasDePie((prev) =>
-            prev.map((z) => (z.id === elementoSel.id ? { ...z, x: newX, y: newY, ancho: newW, alto: newH } : z))
+          zonasRef.current = zonasRef.current.map((z) =>
+            z.id === elementoSel.id ? { ...z, x: newX, y: newY, ancho: newW, alto: newH } : z
           );
         } else if (elementoSel.tipo === 'mesa') {
-          setMesas((prev) =>
-            prev.map((m) => (m.id === elementoSel.id ? { ...m, x: newX, y: newY, ancho: newW, alto: newH } : m))
+          mesasRef.current = mesasRef.current.map((m) =>
+            m.id === elementoSel.id ? { ...m, x: newX, y: newY, ancho: newW, alto: newH } : m
           );
         }
+        renderizar();
         return;
       }
 
-      // 2. Desplazamiento completo del elemento
+      // 2. Desplazamiento fluido
       if (dragModeRef.current === 'move') {
         const nx = Math.round(x - dragStartRef.current.x);
         const ny = Math.round(y - dragStartRef.current.y);
 
         if (elementoSel.tipo === 'palco') {
-          setPalcos((prev) => prev.map((p) => (p.id === elementoSel.id ? { ...p, x: nx, y: ny } : p)));
+          palcosRef.current = palcosRef.current.map((p) => (p.id === elementoSel.id ? { ...p, x: nx, y: ny } : p));
         } else if (elementoSel.tipo === 'zona') {
-          setZonasDePie((prev) => prev.map((z) => (z.id === elementoSel.id ? { ...z, x: nx, y: ny } : z)));
+          zonasRef.current = zonasRef.current.map((z) => (z.id === elementoSel.id ? { ...z, x: nx, y: ny } : z));
         } else if (elementoSel.tipo === 'mesa') {
-          setMesas((prev) => prev.map((m) => (m.id === elementoSel.id ? { ...m, x: nx, y: ny } : m)));
+          mesasRef.current = mesasRef.current.map((m) => (m.id === elementoSel.id ? { ...m, x: nx, y: ny } : m));
         }
+        renderizar();
       }
     }
   };
 
-  const handleMouseUp = () => {
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    e.currentTarget.releasePointerCapture(e.pointerId);
+
+    // Finalizar dibujo y crear elemento
     if (drawingBoxRef.current) {
       const db = drawingBoxRef.current;
       const rx = Math.round(Math.min(db.startX, db.currentX));
@@ -682,73 +795,116 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       const rw = Math.round(Math.abs(db.currentX - db.startX));
       const rh = Math.round(Math.abs(db.currentY - db.startY));
 
-      if (rw > 30 && rh > 20) {
-        if (herramienta === 'dibujar_palco') {
-          const num = `${palcos.length + 1}`;
-          const nuevoPalco: PalcoStudio = {
-            id: `P-${num}-${Date.now().toString().slice(-4)}`,
-            numero: num,
-            nombre: 'Palco Diamante',
-            capacidad: 8,
-            sillasAdicionales: 0,
-            precioPalcoBase: 800.0,
-            modoVenta: 'COMPLETO',
-            color: '#eab308',
-            x: rx,
-            y: ry,
-            ancho: rw,
-            alto: rh,
-            tarifas: {
-              preventa: 560.0,
-              lanzamiento: 640.0,
-              etapa1: 720.0,
-              etapa2: 800.0,
-              etapa3Full: 920.0,
-              esCorporativo: false,
-              precioCorporativo: 700.0,
-              codigoPromoVIP: 'VIP2026',
-              descuentoPromoPct: 10,
-            },
-          };
-          setPalcos((prev) => [...prev, nuevoPalco]);
-          setElementoSel({ tipo: 'palco', id: nuevoPalco.id });
-        } else if (herramienta === 'dibujar_zona') {
-          const nuevaZona: ZonaStudio = {
-            id: `Z-${Date.now().toString().slice(-4)}`,
-            nombre: `Pista General #${zonasDePie.length + 1}`,
-            color: '#38bdf8',
-            precioBase: 45.0,
-            aforoMaximo: Math.max(50, Math.round((rw * rh) / 25)),
-            vendidas: 0,
-            x: rx,
-            y: ry,
-            ancho: rw,
-            alto: rh,
-          };
-          setZonasDePie((prev) => [...prev, nuevaZona]);
-          setElementoSel({ tipo: 'zona', id: nuevaZona.id });
-        } else if (herramienta === 'dibujar_mesa') {
-          const num = `${mesas.length + 1}`;
-          const nuevaMesa: MesaStudio = {
-            id: `M-${num}-${Date.now().toString().slice(-4)}`,
-            numero: num,
-            nombre: 'Mesa VIP',
-            forma: 'REDONDA',
-            sillas: 4,
-            precioSillaBase: 60.0,
-            color: '#6366f1',
-            x: rx,
-            y: ry,
-            ancho: rw,
-            alto: rh,
-          };
-          setMesas((prev) => [...prev, nuevaMesa]);
-          setElementoSel({ tipo: 'mesa', id: nuevaMesa.id });
-        }
+      const wFinal = rw > 15 ? rw : herramienta === 'silla' ? 34 : herramienta === 'mesa' ? 90 : 150;
+      const hFinal = rh > 15 ? rh : herramienta === 'silla' ? 34 : herramienta === 'mesa' ? 90 : 85;
+
+      if (herramienta === 'palco') {
+        const num = `${palcosRef.current.length + 1}`;
+        const nuevoPalco: PalcoStudio = {
+          id: `P-${num}-${Date.now().toString().slice(-4)}`,
+          numero: num,
+          nombre: 'Palco Diamante',
+          capacidad: 8,
+          sillasAdicionales: 0,
+          precioPalcoBase: 800.0,
+          modoVenta: 'COMPLETO',
+          color: '#eab308',
+          x: rx,
+          y: ry,
+          ancho: wFinal,
+          alto: hFinal,
+          tarifas: {
+            preventa: 560.0,
+            lanzamiento: 640.0,
+            etapa1: 720.0,
+            etapa2: 800.0,
+            etapa3Full: 920.0,
+            esCorporativo: false,
+            precioCorporativo: 700.0,
+            codigoPromoVIP: 'VIP2026',
+            descuentoPromoPct: 10,
+          },
+        };
+        const actualizados = [...palcosRef.current, nuevoPalco];
+        palcosRef.current = actualizados;
+        setPalcos(actualizados);
+        setElementoSel({ tipo: 'palco', id: nuevoPalco.id });
+      } else if (herramienta === 'silla') {
+        // SILLA INDIVIDUAL SUELTA NUMERADA
+        const num = `${palcosRef.current.filter((p) => p.isSillaSuelta).length + 1}`;
+        const nuevaSilla: PalcoStudio = {
+          id: `S-${num}-${Date.now().toString().slice(-4)}`,
+          numero: num,
+          nombre: 'Silla Individual',
+          capacidad: 1,
+          isSillaSuelta: true,
+          sillasAdicionales: 0,
+          precioPalcoBase: sillasSueltasPrecio,
+          modoVenta: 'INDIVIDUAL',
+          precioSillaIndividual: sillasSueltasPrecio,
+          color: '#38bdf8',
+          x: rx,
+          y: ry,
+          ancho: 34,
+          alto: 34,
+        };
+        const actualizados = [...palcosRef.current, nuevaSilla];
+        palcosRef.current = actualizados;
+        setPalcos(actualizados);
+        setElementoSel({ tipo: 'palco', id: nuevaSilla.id });
+      } else if (herramienta === 'mesa') {
+        // MESA CON GEOMETRÍA Y DISPOSICIÓN DE SILLAS SELECCIONADA
+        const num = `${mesasRef.current.length + 1}`;
+        const nuevaMesa: MesaStudio = {
+          id: `M-${num}-${Date.now().toString().slice(-4)}`,
+          numero: num,
+          nombre: 'Mesa VIP',
+          forma: formaMesaNueva,
+          disposicionSillas: disposicionSillasNueva,
+          sillas: sillasMesaNueva,
+          precioSillaBase: 60.0,
+          color: '#6366f1',
+          x: rx,
+          y: ry,
+          ancho: wFinal,
+          alto: hFinal,
+        };
+        const actualizadas = [...mesasRef.current, nuevaMesa];
+        mesasRef.current = actualizadas;
+        setMesas(actualizadas);
+        setElementoSel({ tipo: 'mesa', id: nuevaMesa.id });
+      } else if (herramienta === 'zona') {
+        const num = `${zonasRef.current.length + 1}`;
+        const nuevaZona: ZonaStudio = {
+          id: `Z-${Date.now().toString().slice(-4)}`,
+          numero: num,
+          nombre: `Pista General #${num}`,
+          color: '#38bdf8',
+          precioBase: 45.0,
+          aforoMaximo: 250,
+          vendidas: 0,
+          x: rx,
+          y: ry,
+          ancho: wFinal,
+          alto: hFinal,
+        };
+        const actualizadas = [...zonasRef.current, nuevaZona];
+        zonasRef.current = actualizadas;
+        setZonasDePie(actualizadas);
+        setElementoSel({ tipo: 'zona', id: nuevaZona.id });
       }
+
       drawingBoxRef.current = null;
       setHerramienta('seleccionar');
     }
+
+    // Sincronizar estados definitivos en React al soltar el ratón
+    if (isDraggingRef.current) {
+      setPalcos([...palcosRef.current]);
+      setMesas([...mesasRef.current]);
+      setZonasDePie([...zonasRef.current]);
+    }
+
     isDraggingRef.current = false;
     dragModeRef.current = null;
     activeHandleRef.current = null;
@@ -760,7 +916,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     setZoom((prev) => Math.min(3.0, Math.max(0.3, Number((prev * factor).toFixed(2)))));
   };
 
-  // Carga masiva de CSV / TXT
+  // Carga Masiva de Archivo CSV
   const handleImportarCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -811,17 +967,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
             y: yPos,
             ancho: itemW,
             alto: itemH,
-            tarifas: {
-              preventa: Number((precioBase * 0.7).toFixed(2)),
-              lanzamiento: Number((precioBase * 0.8).toFixed(2)),
-              etapa1: Number((precioBase * 0.9).toFixed(2)),
-              etapa2: precioBase,
-              etapa3Full: Number((precioBase * 1.15).toFixed(2)),
-              esCorporativo: false,
-              precioCorporativo: Number((precioBase * 0.85).toFixed(2)),
-              codigoPromoVIP: 'VIP2026',
-              descuentoPromoPct: 10,
-            },
           });
           count++;
         }
@@ -829,7 +974,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
 
       setPalcos((prev) => [...prev, ...nuevosPalcos]);
       setModalCsvAbierto(false);
-      notificar(`¡Importación completada! ${nuevosPalcos.length} palcos generados en cuadrícula.`);
+      notificar(`¡Importados ${nuevosPalcos.length} palcos correctamente!`);
     };
     reader.readAsText(file);
   };
@@ -877,31 +1022,30 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Barra de Herramientas Superior: Acciones Globales + Switcher Editor/Preview */}
+      {/* BARRA SUPERIOR: NUEVO EN BLANCO, CSV, SWITCHER Y PUBLICAR */}
       <div className="glass-panel p-4 rounded-3xl border border-white/10 flex flex-wrap justify-between items-center gap-3">
         <div className="flex items-center gap-2">
-          {/* Botón para iniciar mapa en blanco */}
+          {/* Botón Nuevo Mapa en Blanco */}
           <button
             onClick={handleNuevoMapaEnBlanco}
             className="px-4 py-2 rounded-2xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
-            title="Borra todos los elementos e inicia un lienzo limpio con solo la cuadrícula"
+            title="Limpia todo e inicia con solo la cuadrícula"
           >
             <FilePlus className="w-4 h-4 text-rose-400" />
             <span>Nuevo Mapa en Blanco</span>
           </button>
 
-          {/* Botón Cargar Archivo CSV / TXT */}
+          {/* Botón Cargar Archivo Plano CSV/TXT */}
           <button
             onClick={() => setModalCsvAbierto(true)}
             className="px-4 py-2 rounded-2xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
-            title="Importar archivo CSV o TXT con palcos masivos"
           >
             <FileSpreadsheet className="w-4 h-4 text-indigo-400" />
-            <span>Cargar Archivo CSV/TXT</span>
+            <span>Cargar Archivo CSV / TXT</span>
           </button>
         </div>
 
-        {/* Switcher Estilo Elementor: [ ✏️ Modo Edición ] vs [ 👁️ Previsualizador Taquilla ] */}
+        {/* Switcher Modo Edición vs Modo Previsualizador */}
         <div className="flex items-center bg-slate-900 border border-white/10 rounded-2xl p-1">
           <button
             onClick={() => {
@@ -930,7 +1074,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
           </button>
         </div>
 
-        {/* Guardar y Publicar */}
+        {/* Botón Publicar */}
         <button
           onClick={handleGuardarDefinitivo}
           disabled={guardando}
@@ -957,21 +1101,20 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
         </div>
       )}
 
-      {/* Grid Principal: Panel de Control (Izquierda) + Lienzo 2D con Handles (Derecha) */}
+      {/* Grid Principal: Formulario a la Izquierda y Canvas a la Derecha */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* PANEL IZQUIERDO: FORMULARIO Y HERRAMIENTAS */}
+        {/* PANEL IZQUIERDO */}
         <div className="lg:col-span-4 space-y-4">
           <div className="glass-panel rounded-3xl p-5 border border-white/10 space-y-4">
-            {/* Pestañas de Ajustes */}
             <div className="flex flex-wrap gap-1 pb-3 border-b border-white/10">
               <button
-                onClick={() => setTabSidebar('elementos')}
+                onClick={() => setTabSidebar('herramientas')}
                 className={`flex-1 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
-                  tabSidebar === 'elementos' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                  tabSidebar === 'herramientas' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
                 <Grid className="w-3.5 h-3.5" />
-                <span>Elementos</span>
+                <span>Creación</span>
               </button>
               <button
                 onClick={() => setTabSidebar('fondo')}
@@ -989,89 +1132,139 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
                 }`}
               >
                 <Tag className="w-3.5 h-3.5" />
-                <span>Tarifas</span>
+                <span>Tarifario</span>
               </button>
             </div>
 
-            {/* TAB 1: ELEMENTOS Y DIBUJO CON PUNTOS */}
-            {tabSidebar === 'elementos' && (
+            {/* TAB 1: HERRAMIENTAS DE CREACIÓN */}
+            {tabSidebar === 'herramientas' && (
               <div className="space-y-4 animate-fadeIn">
                 <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                  Herramientas de Dibujo (Arrastra en el Lienzo):
+                  Selecciona la herramienta a crear:
                 </span>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-4 gap-2">
                   <button
-                    onClick={() => setHerramienta('dibujar_palco')}
-                    className={`p-3 rounded-2xl border text-center transition flex flex-col items-center gap-1.5 cursor-pointer ${
-                      herramienta === 'dibujar_palco'
-                        ? 'bg-amber-500/20 border-amber-400 text-white shadow-md'
+                    onClick={() => setHerramienta('palco')}
+                    className={`p-2.5 rounded-2xl border text-center transition flex flex-col items-center gap-1 cursor-pointer ${
+                      herramienta === 'palco'
+                        ? 'bg-amber-500/20 border-amber-400 text-white'
                         : 'bg-slate-900 border-white/10 text-slate-300 hover:border-amber-400/50'
                     }`}
                   >
                     <Crown className="w-4 h-4 text-amber-400" />
-                    <span className="text-xs font-bold">Palco</span>
+                    <span className="text-[11px] font-bold">Palco</span>
                   </button>
                   <button
-                    onClick={() => setHerramienta('dibujar_mesa')}
-                    className={`p-3 rounded-2xl border text-center transition flex flex-col items-center gap-1.5 cursor-pointer ${
-                      herramienta === 'dibujar_mesa'
-                        ? 'bg-indigo-500/20 border-indigo-400 text-white shadow-md'
+                    onClick={() => setHerramienta('mesa')}
+                    className={`p-2.5 rounded-2xl border text-center transition flex flex-col items-center gap-1 cursor-pointer ${
+                      herramienta === 'mesa'
+                        ? 'bg-indigo-500/20 border-indigo-400 text-white'
                         : 'bg-slate-900 border-white/10 text-slate-300 hover:border-indigo-400/50'
                     }`}
                   >
                     <Coffee className="w-4 h-4 text-indigo-400" />
-                    <span className="text-xs font-bold">Mesa</span>
+                    <span className="text-[11px] font-bold">Mesa</span>
                   </button>
                   <button
-                    onClick={() => setHerramienta('dibujar_zona')}
-                    className={`p-3 rounded-2xl border text-center transition flex flex-col items-center gap-1.5 cursor-pointer ${
-                      herramienta === 'dibujar_zona'
-                        ? 'bg-sky-500/20 border-sky-400 text-white shadow-md'
+                    onClick={() => setHerramienta('silla')}
+                    className={`p-2.5 rounded-2xl border text-center transition flex flex-col items-center gap-1 cursor-pointer ${
+                      herramienta === 'silla'
+                        ? 'bg-sky-500/20 border-sky-400 text-white'
                         : 'bg-slate-900 border-white/10 text-slate-300 hover:border-sky-400/50'
                     }`}
                   >
-                    <Layers className="w-4 h-4 text-sky-400" />
-                    <span className="text-xs font-bold">Zona</span>
+                    <Armchair className="w-4 h-4 text-sky-400" />
+                    <span className="text-[11px] font-bold">Silla</span>
+                  </button>
+                  <button
+                    onClick={() => setHerramienta('zona')}
+                    className={`p-2.5 rounded-2xl border text-center transition flex flex-col items-center gap-1 cursor-pointer ${
+                      herramienta === 'zona'
+                        ? 'bg-emerald-500/20 border-emerald-400 text-white'
+                        : 'bg-slate-900 border-white/10 text-slate-300 hover:border-emerald-400/50'
+                    }`}
+                  >
+                    <Layers className="w-4 h-4 text-emerald-400" />
+                    <span className="text-[11px] font-bold">Zona</span>
                   </button>
                 </div>
 
-                <div className="p-3 rounded-2xl bg-indigo-950/30 border border-indigo-500/20 text-[11px] text-slate-300">
-                  <span className="font-bold text-indigo-300 block mb-0.5">Modificación con Puntos de Control:</span>
-                  Selecciona cualquier palco o mesa en el mapa y arrastra los <strong>puntos en sus esquinas y lados</strong> para redimensionar su tamaño al vuelo.
-                </div>
-
-                {/* Listado de Palcos Actuales */}
-                <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1 border-t border-white/5 pt-2">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                    Palcos Creados ({palcos.length}):
-                  </span>
-                  {palcos.map((p) => (
-                    <div
-                      key={p.id}
-                      onClick={() => setElementoSel({ tipo: 'palco', id: p.id })}
-                      className={`p-2.5 rounded-xl border flex justify-between items-center text-xs cursor-pointer transition ${
-                        elementoSel?.id === p.id
-                          ? 'bg-amber-950/60 border-amber-400 text-white'
-                          : 'bg-slate-900/60 border-white/5 text-slate-300 hover:border-amber-500/40'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded-full" style={{ backgroundColor: p.color || '#eab308' }}></span>
-                        <span className="font-bold">Palco #{p.numero || p.id}</span>
-                      </div>
-                      <span className="font-mono text-emerald-400">{p.precioPalcoBase} {evento.moneda}</span>
+                {/* OPCIONES ESPECÍFICAS PARA MESAS */}
+                {herramienta === 'mesa' && (
+                  <div className="p-3.5 rounded-2xl bg-indigo-950/30 border border-indigo-500/20 space-y-3 text-xs animate-fadeIn">
+                    <span className="font-bold text-indigo-300 block">Ajustes de la Mesa a Dibujar:</span>
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-1">Geometría de la Mesa:</label>
+                      <select
+                        value={formaMesaNueva}
+                        onChange={(e) => setFormaMesaNueva(e.target.value as FormaMesaExtendida)}
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold"
+                      >
+                        <option value="REDONDA">⚪ Redonda</option>
+                        <option value="CUADRADA">⬛ Cuadrada</option>
+                        <option value="HEXAGONAL">⬡ Hexagonal</option>
+                        <option value="OCTOGONAL">⬢ Octogonal</option>
+                        <option value="RECTANGULAR">▭ Rectangular / Banquete</option>
+                      </select>
                     </div>
-                  ))}
-                </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] text-slate-400 block mb-1">Cantidad de Sillas:</label>
+                        <input
+                          type="number"
+                          min="2"
+                          max="20"
+                          value={sillasMesaNueva}
+                          onChange={(e) => setSillasMesaNueva(parseInt(e.target.value) || 2)}
+                          className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-slate-400 block mb-1">Ubicación de Sillas:</label>
+                        <select
+                          value={disposicionSillasNueva}
+                          onChange={(e) => setDisposicionSillasNueva(e.target.value as DisposicionSillasMesa)}
+                          className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold text-[11px]"
+                        >
+                          <option value="ALREDEDOR">Alrededor (360°)</option>
+                          <option value="FRONTAL">Al Frente / Abajo</option>
+                          <option value="LATERALES">Banquete (Lados)</option>
+                          <option value="HERRADURA">Herradura (En U)</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* OPCIONES ESPECÍFICAS PARA SILLAS SUELTAS */}
+                {herramienta === 'silla' && (
+                  <div className="p-3.5 rounded-2xl bg-sky-950/30 border border-sky-500/20 space-y-2 text-xs animate-fadeIn">
+                    <span className="font-bold text-sky-300 block">Ajustes de Sillas Individuales:</span>
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-1">Precio por Silla ({evento.moneda}):</label>
+                      <input
+                        type="number"
+                        value={sillasSueltasPrecio}
+                        onChange={(e) => setSillasSueltasPrecio(parseFloat(e.target.value) || 0)}
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
+                      />
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Haz clic en el lienzo para colocar una silla numerada correlativa. En el mapa se verá únicamente su número.
+                    </p>
+                  </div>
+                )}
+
+                <p className="text-[11px] text-slate-400">
+                  Arrastra con el ratón sobre el lienzo para trazar el elemento. Se creará de inmediato y podrás ajustar su tamaño arrastrando los puntos en sus esquinas.
+                </p>
               </div>
             )}
 
-            {/* TAB 2: CALIBRACIÓN DEL PLANO DE FONDO (TAMAÑO, ESCALA Y POSICIÓN) */}
+            {/* TAB 2: PLANO DE FONDO (CALIBRACIÓN MILIMÉTRICA) */}
             {tabSidebar === 'fondo' && (
               <div className="space-y-4 animate-fadeIn">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                  Cargar Imagen de Plano (PC, Drive o Web):
-                </span>
                 <label className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer">
                   <Upload className="w-4 h-4" />
                   <span>Subir Imagen desde mi Equipo</span>
@@ -1096,20 +1289,19 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
 
                 <input
                   type="url"
-                  placeholder="O ingresa URL pública / Enlace Drive..."
+                  placeholder="O ingresa enlace URL..."
                   value={imagenFondo}
                   onChange={(e) => setImagenFondo(e.target.value)}
                   className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-xs text-white"
                 />
 
-                {/* Ajustes de Posición y Tamaño de la Imagen */}
                 <div className="space-y-3 pt-2 border-t border-white/5">
                   <span className="text-[10px] uppercase font-bold text-indigo-300 block tracking-wider">
                     Calibración de Tamaño y Disposición:
                   </span>
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div>
-                      <label className="text-[10px] text-slate-400 block mb-1">Ancho Imagen (px):</label>
+                      <label className="text-[10px] text-slate-400 block mb-1">Ancho (px):</label>
                       <input
                         type="number"
                         value={bgSize.w}
@@ -1118,7 +1310,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] text-slate-400 block mb-1">Alto Imagen (px):</label>
+                      <label className="text-[10px] text-slate-400 block mb-1">Alto (px):</label>
                       <input
                         type="number"
                         value={bgSize.h}
@@ -1127,7 +1319,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] text-slate-400 block mb-1">Desplazamiento X:</label>
+                      <label className="text-[10px] text-slate-400 block mb-1">Posición X:</label>
                       <input
                         type="number"
                         value={bgPos.x}
@@ -1136,7 +1328,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] text-slate-400 block mb-1">Desplazamiento Y:</label>
+                      <label className="text-[10px] text-slate-400 block mb-1">Posición Y:</label>
                       <input
                         type="number"
                         value={bgPos.y}
@@ -1160,13 +1352,13 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
                       onClick={() => setImagenFondo('')}
                       className="px-3 py-1.5 rounded-xl bg-rose-500/10 text-rose-300 text-xs font-bold hover:bg-rose-500/20 transition cursor-pointer"
                     >
-                      Quitar Imagen
+                      Quitar
                     </button>
                   </div>
 
                   <div>
                     <div className="flex justify-between text-xs text-slate-400 mb-1">
-                      <span>Opacidad de la Imagen:</span>
+                      <span>Opacidad:</span>
                       <span className="font-mono text-white">{Math.round(imagenFondoOpacidad * 100)}%</span>
                     </div>
                     <input
@@ -1183,7 +1375,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
               </div>
             )}
 
-            {/* TAB 3: TARIFARIO, FASES Y DESCUENTOS */}
+            {/* TAB 3: TARIFARIO Y FASES */}
             {tabSidebar === 'tarifas' && (
               <div className="space-y-4 animate-fadeIn">
                 {elementoSel && palcoActivo ? (
@@ -1288,181 +1480,256 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
                         />
                       </div>
                     </div>
-
-                    {/* Venta Corporativa */}
-                    <div className="p-3 rounded-2xl bg-indigo-950/30 border border-indigo-500/20 space-y-2">
-                      <div className="flex justify-between items-center">
-                        <span className="font-bold text-white flex items-center gap-1.5">
-                          <Building2 className="w-3.5 h-3.5 text-indigo-400" /> Venta Corporativa (B2B)
-                        </span>
-                        <input
-                          type="checkbox"
-                          checked={palcoActivo.tarifas?.esCorporativo || false}
-                          onChange={(e) => {
-                            const val = e.target.checked;
-                            setPalcos(
-                              palcos.map((p) =>
-                                p.id === palcoActivo.id
-                                  ? { ...p, tarifas: { ...p.tarifas!, esCorporativo: val } }
-                                  : p
-                              )
-                            );
-                          }}
-                          className="w-4 h-4 accent-indigo-600 rounded"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Código Descuento VIP */}
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-[10px] text-slate-400 block mb-1">Cupón VIP:</label>
-                        <input
-                          type="text"
-                          value={palcoActivo.tarifas?.codigoPromoVIP || ''}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setPalcos(
-                              palcos.map((p) =>
-                                p.id === palcoActivo.id
-                                  ? { ...p, tarifas: { ...p.tarifas!, codigoPromoVIP: val } }
-                                  : p
-                              )
-                            );
-                          }}
-                          className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-slate-400 block mb-1">Descuento (%):</label>
-                        <input
-                          type="number"
-                          value={palcoActivo.tarifas?.descuentoPromoPct || 0}
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value) || 0;
-                            setPalcos(
-                              palcos.map((p) =>
-                                p.id === palcoActivo.id
-                                  ? { ...p, tarifas: { ...p.tarifas!, descuentoPromoPct: val } }
-                                  : p
-                              )
-                            );
-                          }}
-                          className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
-                        />
-                      </div>
-                    </div>
                   </div>
                 ) : (
                   <p className="text-xs text-slate-400 text-center py-6">
-                    Selecciona un palco o zona en el lienzo para configurar sus 5 etapas de precios y venta corporativa.
+                    Selecciona un palco o elemento para editar sus etapas tarifarias.
                   </p>
                 )}
               </div>
             )}
           </div>
 
-          {/* INSPECTOR DE PROPIEDADES DIRECTAS (CONTROL Y BOLETA) */}
-          {elementoSel && palcoActivo && (
-            <div className="glass-panel rounded-3xl p-4 border border-amber-500/30 space-y-3 bg-slate-950/80">
+          {/* INSPECTOR DE PROPIEDADES DIRECTAS (CONTROL Y BOLETA VS MAPA) */}
+          {elementoSel && (
+            <div className="glass-panel rounded-3xl p-4 border border-indigo-500/30 space-y-3 bg-slate-950/80 animate-fadeIn">
               <div className="flex justify-between items-center border-b border-white/10 pb-2">
-                <span className="text-xs font-bold text-amber-300 uppercase flex items-center gap-1.5">
-                  <Settings2 className="w-4 h-4" /> Control & Boleta: Palco #{palcoActivo.numero}
+                <span className="text-xs font-bold text-indigo-300 uppercase flex items-center gap-1.5">
+                  <Settings2 className="w-4 h-4" /> Inspector del Elemento
                 </span>
                 <button
                   onClick={() => {
-                    setPalcos(palcos.filter((p) => p.id !== palcoActivo.id));
+                    if (elementoSel.tipo === 'palco') {
+                      setPalcos(palcos.filter((p) => p.id !== elementoSel.id));
+                    } else if (elementoSel.tipo === 'mesa') {
+                      setMesas(mesas.filter((m) => m.id !== elementoSel.id));
+                    } else if (elementoSel.tipo === 'zona') {
+                      setZonasDePie(zonasDePie.filter((z) => z.id !== elementoSel.id));
+                    }
                     setElementoSel(null);
                   }}
                   className="text-rose-400 hover:bg-rose-500/10 p-1 rounded-lg cursor-pointer"
-                  title="Eliminar Palco"
+                  title="Eliminar"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
 
-              {/* Nombre de control interno (Sale en la boleta) */}
-              <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Nombre Categoría (Para Boleta y Control):</label>
-                <input
-                  type="text"
-                  value={palcoActivo.nombre}
-                  onChange={(e) =>
-                    setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, nombre: e.target.value } : p)))
-                  }
-                  className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold"
-                  placeholder="Ej. Palco Diamante VIP"
-                />
-              </div>
+              {/* INSPECTOR PALCO O SILLA SUELTA */}
+              {elementoSel.tipo === 'palco' && palcoActivo && (
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <label className="text-[10px] text-slate-400 block mb-1">
+                      Nombre Interno (Sale en la Boleta y Control):
+                    </label>
+                    <input
+                      type="text"
+                      value={palcoActivo.nombre}
+                      onChange={(e) =>
+                        setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, nombre: e.target.value } : p)))
+                      }
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold"
+                    />
+                  </div>
 
-              {/* Número que sale en el mapa */}
-              <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Número de Palco (Sale en el Mapa):</label>
-                <input
-                  type="text"
-                  value={palcoActivo.numero || ''}
-                  onChange={(e) =>
-                    setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, numero: e.target.value } : p)))
-                  }
-                  className="w-full bg-slate-900 border border-amber-500/40 rounded-xl p-2 text-amber-300 font-bold font-mono text-sm"
-                  placeholder="Ej. 1"
-                />
-              </div>
+                  <div>
+                    <label className="text-[10px] text-amber-400 font-bold block mb-1">
+                      Número de Localidad (Sale en el Mapa):
+                    </label>
+                    <input
+                      type="text"
+                      value={palcoActivo.numero || ''}
+                      onChange={(e) =>
+                        setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, numero: e.target.value } : p)))
+                      }
+                      className="w-full bg-slate-900 border border-amber-500/40 rounded-xl p-2 text-amber-300 font-bold font-mono text-base text-center"
+                    />
+                  </div>
 
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div>
-                  <label className="text-[10px] text-slate-400 block mb-1">Ancho (px):</label>
-                  <input
-                    type="number"
-                    value={palcoActivo.ancho || 150}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value) || 50;
-                      setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, ancho: val } : p)));
-                    }}
-                    className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] text-slate-400 block mb-1">Alto (px):</label>
-                  <input
-                    type="number"
-                    value={palcoActivo.alto || 85}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value) || 30;
-                      setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, alto: val } : p)));
-                    }}
-                    className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
-                  />
-                </div>
-              </div>
+                  {!palcoActivo.isSillaSuelta && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] text-slate-400 block mb-1">Plazas:</label>
+                        <input
+                          type="number"
+                          value={palcoActivo.capacidad}
+                          onChange={(e) =>
+                            setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, capacidad: parseInt(e.target.value) || 1 } : p)))
+                          }
+                          className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-slate-400 block mb-1">Precio Total ({evento.moneda}):</label>
+                        <input
+                          type="number"
+                          value={palcoActivo.precioPalcoBase}
+                          onChange={(e) =>
+                            setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, precioPalcoBase: parseFloat(e.target.value) || 0 } : p)))
+                          }
+                          className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
+                        />
+                      </div>
+                    </div>
+                  )}
 
-              <div className="flex items-center justify-between text-xs pt-1">
-                <span className="text-slate-400">Color Identificador:</span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="color"
-                    value={palcoActivo.color || '#eab308'}
-                    onChange={(e) =>
-                      setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, color: e.target.value } : p)))
-                    }
-                    className="w-8 h-8 rounded-lg bg-slate-900 border border-white/10 cursor-pointer"
-                  />
-                  <span className="font-mono text-white text-[11px]">{palcoActivo.color || '#eab308'}</span>
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="text-slate-400">Color:</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={palcoActivo.color || '#eab308'}
+                        onChange={(e) =>
+                          setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, color: e.target.value } : p)))
+                        }
+                        className="w-8 h-8 rounded-lg bg-slate-900 border border-white/10 cursor-pointer"
+                      />
+                      <span className="font-mono text-white text-[11px]">{palcoActivo.color || '#eab308'}</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* INSPECTOR MESA */}
+              {elementoSel.tipo === 'mesa' && mesaActiva && (
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <label className="text-[10px] text-slate-400 block mb-1">Nombre Interno (Boleta):</label>
+                    <input
+                      type="text"
+                      value={mesaActiva.nombre}
+                      onChange={(e) =>
+                        setMesas(mesas.map((m) => (m.id === mesaActiva.id ? { ...m, nombre: e.target.value } : m)))
+                      }
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-indigo-400 font-bold block mb-1">Número de Mesa (Mapa):</label>
+                    <input
+                      type="text"
+                      value={mesaActiva.numero || ''}
+                      onChange={(e) =>
+                        setMesas(mesas.map((m) => (m.id === mesaActiva.id ? { ...m, numero: e.target.value } : m)))
+                      }
+                      className="w-full bg-slate-900 border border-indigo-500/40 rounded-xl p-2 text-indigo-300 font-bold font-mono text-base text-center"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-1">Geometría:</label>
+                      <select
+                        value={mesaActiva.forma}
+                        onChange={(e) =>
+                          setMesas(mesas.map((m) => (m.id === mesaActiva.id ? { ...m, forma: e.target.value as FormaMesaExtendida } : m)))
+                        }
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold text-[11px]"
+                      >
+                        <option value="REDONDA">⚪ Redonda</option>
+                        <option value="CUADRADA">⬛ Cuadrada</option>
+                        <option value="HEXAGONAL">⬡ Hexagonal</option>
+                        <option value="OCTOGONAL">⬢ Octogonal</option>
+                        <option value="RECTANGULAR">▭ Banquete</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-1">Disposición:</label>
+                      <select
+                        value={mesaActiva.disposicionSillas || 'ALREDEDOR'}
+                        onChange={(e) =>
+                          setMesas(mesas.map((m) => (m.id === mesaActiva.id ? { ...m, disposicionSillas: e.target.value as DisposicionSillasMesa } : m)))
+                        }
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold text-[11px]"
+                      >
+                        <option value="ALREDEDOR">Alrededor</option>
+                        <option value="FRONTAL">Al Frente</option>
+                        <option value="LATERALES">Banquete</option>
+                        <option value="HERRADURA">Herradura</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-1">Sillas:</label>
+                      <input
+                        type="number"
+                        value={mesaActiva.sillas}
+                        onChange={(e) =>
+                          setMesas(mesas.map((m) => (m.id === mesaActiva.id ? { ...m, sillas: parseInt(e.target.value) || 1 } : m)))
+                        }
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-1">Precio Silla ({evento.moneda}):</label>
+                      <input
+                        type="number"
+                        value={mesaActiva.precioSillaBase}
+                        onChange={(e) =>
+                          setMesas(mesas.map((m) => (m.id === mesaActiva.id ? { ...m, precioSillaBase: parseFloat(e.target.value) || 0 } : m)))
+                        }
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* INSPECTOR ZONA */}
+              {elementoSel.tipo === 'zona' && zonaActiva && (
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <label className="text-[10px] text-slate-400 block mb-1">Nombre Zona (Boleta):</label>
+                    <input
+                      type="text"
+                      value={zonaActiva.nombre}
+                      onChange={(e) =>
+                        setZonasDePie(zonasDePie.map((z) => (z.id === zonaActiva.id ? { ...z, nombre: e.target.value } : z)))
+                      }
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-1">Aforo (Pax):</label>
+                      <input
+                        type="number"
+                        value={zonaActiva.aforoMaximo}
+                        onChange={(e) =>
+                          setZonasDePie(zonasDePie.map((z) => (z.id === zonaActiva.id ? { ...z, aforoMaximo: parseInt(e.target.value) || 1 } : z)))
+                        }
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-1">Precio ({evento.moneda}):</label>
+                      <input
+                        type="number"
+                        value={zonaActiva.precioBase}
+                        onChange={(e) =>
+                          setZonasDePie(zonasDePie.map((z) => (z.id === zonaActiva.id ? { ...z, precioBase: parseFloat(e.target.value) || 0 } : z)))
+                        }
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        {/* PANEL DERECHO: LIENZO CANVAS DE ALTA RESOLUCIÓN */}
+        {/* PANEL DERECHO: CANVAS CON CONTROL DE RATÓN SINCRONIZADO */}
         <div className="lg:col-span-8">
           <div className="glass-panel p-3 rounded-3xl border border-white/10 bg-slate-950 flex flex-col items-center overflow-hidden">
-            {/* Barra de Controles de Lienzo */}
             <div className="w-full flex justify-between items-center px-2 pb-2 border-b border-white/5 text-xs text-slate-400">
               <div className="flex items-center gap-2">
                 <span className={`w-2.5 h-2.5 rounded-full ${modoVista === 'preview' ? 'bg-emerald-400 animate-pulse' : 'bg-indigo-400'}`}></span>
                 <span className="text-white font-bold">
-                  {modoVista === 'preview' ? 'Previsualizador Fan en Vivo (Prueba de Selección)' : 'Lienzo de Diseño Arquitectónico'}
+                  {modoVista === 'preview' ? 'Previsualizador Taquilla Fan (Solo Números Visibles)' : 'Lienzo de Diseño Arquitectónico'}
                 </span>
               </div>
 
@@ -1511,31 +1778,32 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
               ref={canvasRef}
               width={1600}
               height={1000}
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
               onWheel={handleWheel}
+              style={{ touchAction: 'none' }}
               className={`rounded-2xl max-w-full h-auto select-none mt-2 ${
                 herramienta === 'pan' ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
               }`}
             />
 
             <div className="w-full flex justify-between items-center text-[10px] text-slate-500 pt-2 px-2">
-              <span>Resolución Nativa: 1600×1000 px | Arrastra las esquinas de cualquier palco para cambiar su tamaño</span>
-              <span className="font-mono text-slate-400">Total Palcos: {palcos.length}</span>
+              <span>Resolución: 1600×1000 px | Arrastra las esquinas de cualquier elemento para redimensionar</span>
+              <span className="font-mono text-slate-400">Total Palcos/Mesas: {palcos.length + mesas.length}</span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* MODAL DE CARGA MASIVA CSV / TXT */}
+      {/* MODAL CSV */}
       {modalCsvAbierto && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-white/10 rounded-3xl p-6 max-w-lg w-full space-y-4 shadow-2xl animate-fadeIn">
             <div className="flex justify-between items-center border-b border-white/10 pb-3">
               <div className="flex items-center gap-2">
                 <FileSpreadsheet className="w-5 h-5 text-indigo-400" />
-                <h3 className="text-base font-bold text-white">Importador Masivo de Archivos Planos</h3>
+                <h3 className="text-base font-bold text-white">Importador Masivo CSV / TXT</h3>
               </div>
               <button onClick={() => setModalCsvAbierto(false)} className="text-slate-400 hover:text-white cursor-pointer">
                 <X className="w-5 h-5" />
@@ -1543,14 +1811,14 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
             </div>
 
             <p className="text-xs text-slate-300">
-              Carga tu archivo <strong>.CSV</strong> o <strong>.TXT</strong> con la lista de palcos, capacidades y precios. La plataforma generará automáticamente la cuadrícula y las etapas tarifarias en milisegundos.
+              Carga tu archivo con la lista de palcos y precios. Se ubicarán automáticamente en cuadrícula sobre el plano.
             </p>
 
             <div className="p-4 rounded-2xl border-2 border-dashed border-indigo-500/40 hover:border-indigo-500 bg-indigo-950/20 text-center cursor-pointer">
               <label className="cursor-pointer block">
                 <Upload className="w-8 h-8 text-indigo-400 mx-auto mb-2" />
-                <span className="text-xs font-bold text-white block">Haz clic para buscar tu archivo CSV o TXT</span>
-                <span className="text-[10px] text-slate-400">Admite archivos con más de 1.500 palcos</span>
+                <span className="text-xs font-bold text-white block">Seleccionar archivo .CSV o .TXT</span>
+                <span className="text-[10px] text-slate-400">Admite más de 1.500 localidades</span>
                 <input type="file" accept=".csv,.txt" onChange={handleImportarCSV} className="hidden" />
               </label>
             </div>
@@ -1561,7 +1829,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
                 className="text-xs text-indigo-400 hover:text-indigo-300 underline flex items-center gap-1 cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>Descargar archivo de ejemplo (.csv)</span>
+                <span>Descargar plantilla de ejemplo (.csv)</span>
               </button>
               <button
                 onClick={() => setModalCsvAbierto(false)}
