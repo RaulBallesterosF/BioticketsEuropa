@@ -39,7 +39,7 @@ export type TipoEvento = 'CONCIERTO_UNICO' | 'FERIA_MULTIDIA';
 export interface Evento {
   id: number;
   nombre: string;
-  pais: 'Español' | 'Colombia' | 'México' | 'Estados Unidos' | string;
+  pais: 'España' | 'Colombia' | 'México' | 'Estados Unidos' | string;
   ciudad: string;
   lugar: string;
   direccion: string;
@@ -59,6 +59,7 @@ export interface Evento {
   moneda: 'EUR' | 'COP' | 'USD';
   estado: 'ACTIVO' | 'SOLD_OUT' | 'FINALIZADO' | 'CANCELADO';
   aforoMaximo?: number;
+  mapaAsociadoId?: string;
 }
 
 export interface FilaAsientos {
@@ -70,14 +71,14 @@ export interface FilaAsientos {
   yOffset?: number;
 }
 
-export type FormaMesa = 'REDONDA' | 'CUADRADA' | 'HEXAGONAL' | 'OCTOGONAL' | 'TRIANGULAR';
+export type FormaMesa = 'REDONDA' | 'CUADRADA' | 'HEXAGONAL' | 'OCTOGONAL' | 'TRIANGULAR' | 'RECTANGULAR';
 
 export interface MesaEspecial {
   id: string;
   nombre: string;
   forma: FormaMesa;
   sillas: number;
-  disposicionSillas?: 'ALREDEDOR' | 'FRONTAL';
+  disposicionSillas?: 'ALREDEDOR' | 'FRONTAL' | 'LATERALES' | 'HERRADURA';
   precioSillaBase: number;
   x?: number;
   y?: number;
@@ -129,6 +130,20 @@ export interface MapaRecinto {
   filas: FilaAsientos[];
   mesas: MesaEspecial[];
   palcos: PalcoVIP[];
+}
+
+export interface PlantillaRecintoMaestro {
+  id: string;
+  nombre: string;
+  recinto: string;
+  ciudad: string;
+  comentarios: string;
+  aforoTotal: number;
+  totalPalcos: number;
+  totalMesas: number;
+  totalZonas: number;
+  fechaCreacion: string;
+  mapa: MapaRecinto;
 }
 
 export interface AsientoItem {
