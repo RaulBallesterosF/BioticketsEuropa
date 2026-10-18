@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Evento,
   MapaRecinto,
@@ -38,7 +38,13 @@ import {
   DollarSign,
   Users,
   ShieldCheck,
-  Info,
+  ZoomIn,
+  ZoomOut,
+  Hand,
+  Grid,
+  Palette,
+  MapPin,
+  RefreshCw,
 } from 'lucide-react';
 
 interface SeatMapStudioProps {
@@ -49,34 +55,28 @@ interface SeatMapStudioProps {
   onCambiarTab?: (tab: string) => void;
 }
 
-type TipoElementoSeleccionado = 'palco' | 'mesa' | 'zona' | 'fila';
+type TipoElemento = 'fila' | 'mesa' | 'palco' | 'zona';
 
 interface ElementoSeleccionado {
-  tipo: TipoElementoSeleccionado;
+  tipo: TipoElemento;
   id: string;
 }
 
-const FONDOS_PREDEFINIDOS = [
-  {
-    nombre: 'Arena Deportiva 360°',
-    url: 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?auto=format&fit=crop&w=1200&q=80',
-    descripcion: 'Vista aérea de coliseo/estadio con iluminación perimetral',
-  },
-  {
-    nombre: 'Teatro & Auditorio Sinfónico',
-    url: 'https://images.unsplash.com/photo-1514306191717-452ec28c7814?auto=format&fit=crop&w=1200&q=80',
-    descripcion: 'Distribución en abanico con plateas y palcos laterales',
-  },
-  {
-    nombre: 'Pabellón de Ferias y Convenciones',
-    url: 'https://images.unsplash.com/photo-1511578314322-379afb476865?auto=format&fit=crop&w=1200&q=80',
-    descripcion: 'Pabellón diáfano para stands, zonas de pie y áreas VIP',
-  },
-  {
-    nombre: 'Club VIP Lounge Nocturno',
-    url: 'https://images.unsplash.com/photo-1566737236500-c8ac43014a67?auto=format&fit=crop&w=1200&q=80',
-    descripcion: 'Pista central con mesas lounge y palcos privados reservados',
-  },
+// Extensión local compatible para filas con soporte de arcos y rotación
+interface FilaExtendida extends FilaAsientos {
+  xOffset?: number;
+  curvatura?: number; // 0 = recta, >0 = radio de curvatura en abanico
+  anguloInicio?: number;
+  rotacion?: number;
+  categoria?: string;
+}
+
+const CATEGORIAS_PRECIO = [
+  { nombre: 'VIP Platinum', color: '#eab308', precio: 120.0 },
+  { nombre: 'Platea Gold', color: '#6366f1', precio: 85.0 },
+  { nombre: 'Preferente Silver', color: '#38bdf8', precio: 65.0 },
+  { nombre: 'General Grada', color: '#10b981', precio: 45.0 },
+  { nombre: 'Visibilidad Reducida', color: '#94a3b8', precio: 30.0 },
 ];
 
 export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
@@ -86,57 +86,55 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
   onActualizarEvento,
   onCambiarTab,
 }) => {
-  // Estado local del mapa
+  // Estado de componentes del mapa
   const [imagenFondo, setImagenFondo] = useState(mapaActual.imagenFondo || '');
   const [imagenFondoOpacidad, setImagenFondoOpacidad] = useState(
     mapaActual.imagenFondoOpacidad !== undefined ? mapaActual.imagenFondoOpacidad : 0.35
   );
   const [aforoGeneral, setAforoGeneral] = useState(
-    mapaActual.aforoGeneral || { total: 100, vendidas: 0, precioBase: 30, nombre: 'Pista General' }
+    mapaActual.aforoGeneral || { total: 100, vendidas: 0, precioBase: 35, nombre: 'Pista General' }
   );
-  const [filas, setFilas] = useState<FilaAsientos[]>(mapaActual.filas || []);
+  const [filas, setFilas] = useState<FilaExtendida[]>(
+    (mapaActual.filas || []).map((f) => ({
+      ...f,
+      curvatura: (f as any).curvatura || 0,
+      xOffset: (f as any).xOffset || 0,
+      rotacion: (f as any).rotacion || 0,
+    }))
+  );
   const [mesas, setMesas] = useState<MesaEspecial[]>(mapaActual.mesas || []);
   const [palcos, setPalcos] = useState<PalcoVIP[]>(mapaActual.palcos || []);
   const [zonasDePie, setZonasDePie] = useState<ZonaDePie[]>(mapaActual.zonasDePie || []);
 
-  // Configuración del tipo de evento (Concierto Único vs Feria Multidía)
+  // Control de eventos tipo feria o fecha única
   const [tipoEvento, setTipoEvento] = useState<'CONCIERTO_UNICO' | 'FERIA_MULTIDIA'>(
     evento.tipoEvento || 'CONCIERTO_UNICO'
   );
   const [diasFeria, setDiasFeria] = useState(evento.diasFeria || 3);
-  const [fechasFeria, setFechasFeria] = useState<string[]>(
-    evento.fechasFeria || ['2026-11-10', '2026-11-11', '2026-11-12']
-  );
-  const [diaPreviewActivo, setDiaPreviewActivo] = useState(1);
 
-  // Estados de interfaz y edición
-  const [guardando, setGuardando] = useState(false);
-  const [guardadoExito, setGuardadoExito] = useState(false);
-  const [activeTabToolbox, setActiveTabToolbox] = useState<'palcos' | 'mesas' | 'zonas' | 'filas' | 'fondo'>('palcos');
-  const [modoHerramienta, setModoHerramienta] = useState<'seleccionar' | 'dibujar_zona'>('seleccionar');
+  // Navegación del lienzo y transformaciones
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [herramienta, setHerramienta] = useState<'seleccionar' | 'pan' | 'dibujar_zona'>('seleccionar');
+  const [tabActiva, setTabActiva] = useState<'filas' | 'mesas' | 'palcos' | 'zonas' | 'fondo' | 'tarifas'>('filas');
   const [elementoSeleccionado, setElementoSeleccionado] = useState<ElementoSeleccionado | null>(null);
 
-  // Canvas ref y dibujo
+  // Estados de persistencia
+  const [guardando, setGuardando] = useState(false);
+  const [guardadoExito, setGuardadoExito] = useState(false);
+
+  // Referencias para Canvas y Arrastre
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imgFondoRef = useRef<HTMLImageElement | null>(null);
-  const [imagenCargada, setImagenCargada] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef({ x: 0, y: 0 });
+  const elementoOffsetRef = useRef({ x: 0, y: 0 });
+  const dibujoZonaRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
 
-  // Estado de arrastre y dibujo en canvas
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [dibujoZonaActual, setDibujoZonaActual] = useState<{
-    startX: number;
-    startY: number;
-    currentX: number;
-    currentY: number;
-  } | null>(null);
-
-  // Precargar imagen de fondo cuando cambie
+  // Precargar imagen de fondo
   useEffect(() => {
     if (!imagenFondo) {
       imgFondoRef.current = null;
-      setImagenCargada(false);
       return;
     }
     const img = new Image();
@@ -144,36 +142,20 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     img.src = imagenFondo;
     img.onload = () => {
       imgFondoRef.current = img;
-      setImagenCargada(true);
     };
     img.onerror = () => {
       imgFondoRef.current = null;
-      setImagenCargada(false);
     };
   }, [imagenFondo]);
 
-  // Cargar imagen local desde archivo (FileReader)
-  const handleCargarArchivoLocal = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      if (typeof event.target?.result === 'string') {
-        setImagenFondo(event.target.result);
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
-  // Función para dibujar polígonos regulares en Canvas
+  // Dibujar polígonos regulares para mesas
   const dibujarPoligono = (
     ctx: CanvasRenderingContext2D,
     cx: number,
     cy: number,
     radio: number,
     lados: number,
-    rotacionOffset: number = 0
+    rotacionOffset = 0
   ) => {
     ctx.beginPath();
     for (let i = 0; i < lados; i++) {
@@ -186,8 +168,8 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     ctx.closePath();
   };
 
-  // Renderizado del lienzo en tiempo real
-  useEffect(() => {
+  // Renderizador principal del lienzo Canvas 2D
+  const renderizar = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -196,360 +178,252 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     const w = canvas.width;
     const h = canvas.height;
 
-    // Fondo del canvas
-    ctx.fillStyle = '#090d16';
+    ctx.save();
+    ctx.clearRect(0, 0, w, h);
+
+    // Fondo del estudio
+    ctx.fillStyle = '#050811';
     ctx.fillRect(0, 0, w, h);
 
-    // Cuadrícula arquitectónica sutil de guía (20px)
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
-    ctx.lineWidth = 1;
-    for (let x = 0; x < w; x += 20) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, h);
-      ctx.stroke();
-    }
-    for (let y = 0; y < h; y += 20) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(w, y);
-      ctx.stroke();
-    }
+    // Aplicar transformaciones de Zoom y Desplazamiento (Pan)
+    ctx.translate(pan.x, pan.y);
+    ctx.scale(zoom, zoom);
 
-    // Dibujar imagen de fondo si está presente
-    if (imgFondoRef.current && imagenCargada) {
+    // 1. Cuadrícula arquitectónica milimétrica
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.035)';
+    ctx.lineWidth = 1 / zoom;
+    const gridSize = 25;
+    const minX = -pan.x / zoom;
+    const maxX = (w - pan.x) / zoom;
+    const minY = -pan.y / zoom;
+    const maxY = (h - pan.y) / zoom;
+
+    ctx.beginPath();
+    for (let x = Math.floor(minX / gridSize) * gridSize; x < maxX; x += gridSize) {
+      ctx.moveTo(x, minY);
+      ctx.lineTo(x, maxY);
+    }
+    for (let y = Math.floor(minY / gridSize) * gridSize; y < maxY; y += gridSize) {
+      ctx.moveTo(minX, y);
+      ctx.lineTo(maxX, y);
+    }
+    ctx.stroke();
+
+    // 2. Imagen de fondo calibrada
+    if (imgFondoRef.current) {
       ctx.save();
-      ctx.globalAlpha = Math.max(0.05, Math.min(1, imagenFondoOpacidad));
-      ctx.drawImage(imgFondoRef.current, 0, 0, w, h);
+      ctx.globalAlpha = imagenFondoOpacidad;
+      ctx.drawImage(imgFondoRef.current, 0, 0, 1000, 700);
       ctx.restore();
     }
 
-    // Escenario principal en la parte superior
-    const stageWidth = Math.min(w - 80, 720);
-    const stageX = (w - stageWidth) / 2;
-    const grad = ctx.createLinearGradient(stageX, 12, stageX + stageWidth, 44);
+    // 3. Escenario / Stage Principal
+    const stageWidth = 640;
+    const stageX = (1000 - stageWidth) / 2;
+    const grad = ctx.createLinearGradient(stageX, 20, stageX + stageWidth, 60);
     grad.addColorStop(0, '#1e1b4b');
-    grad.addColorStop(0.5, '#4f46e5');
-    grad.addColorStop(1, '#6d28d9');
-
+    grad.addColorStop(0.5, '#4338ca');
+    grad.addColorStop(1, '#312e81');
     ctx.fillStyle = grad;
-    ctx.strokeStyle = '#818cf8';
+    ctx.strokeStyle = '#6366f1';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.roundRect(stageX, 12, stageWidth, 34, 8);
+    ctx.roundRect(stageX, 20, stageWidth, 42, 10);
     ctx.fill();
     ctx.stroke();
 
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 11px "Plus Jakarta Sans", sans-serif';
+    ctx.font = 'bold 13px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('⚡ ESCENARIO PRINCIPAL / MAIN STAGE ⚡', w / 2, 33);
+    ctx.fillText('ESCENARIO PRINCIPAL / STAGE', 500, 46);
 
-    // 1. ZONAS DE PIE (Admisión General / Standing)
-    zonasDePie.forEach((zona) => {
-      const zx = zona.x;
-      const zy = zona.y;
-      const zw = zona.ancho;
-      const zh = zona.alto;
-      const esSel = elementoSeleccionado?.tipo === 'zona' && elementoSeleccionado.id === zona.id;
-
+    // 4. Zonas de Pie / General Admission
+    zonasDePie.forEach((z) => {
+      const esSel = elementoSeleccionado?.tipo === 'zona' && elementoSeleccionado.id === z.id;
       ctx.save();
-      ctx.fillStyle = `${zona.color || '#38bdf8'}22`;
-      ctx.strokeStyle = esSel ? '#38bdf8' : zona.color || '#38bdf8';
+      ctx.fillStyle = `${z.color || '#38bdf8'}24`;
+      ctx.strokeStyle = esSel ? '#ffffff' : z.color || '#38bdf8';
       ctx.lineWidth = esSel ? 3 : 1.5;
-      ctx.setLineDash([8, 5]);
-
+      ctx.setLineDash([8, 6]);
       ctx.beginPath();
-      ctx.roundRect(zx, zy, zw, zh, 10);
+      ctx.roundRect(z.x, z.y, z.ancho, z.alto, 12);
       ctx.fill();
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Si está seleccionada, halo y manijas
-      if (esSel) {
-        ctx.fillStyle = '#38bdf8';
-        ctx.fillRect(zx - 4, zy - 4, 8, 8);
-        ctx.fillRect(zx + zw - 4, zy - 4, 8, 8);
-        ctx.fillRect(zx - 4, zy + zh - 4, 8, 8);
-        ctx.fillRect(zx + zw - 4, zy + zh - 4, 8, 8);
-      }
-
-      // Etiqueta de la zona
-      ctx.fillStyle = zona.color || '#38bdf8';
-      ctx.font = 'bold 11px "Plus Jakarta Sans", sans-serif';
+      ctx.fillStyle = z.color || '#38bdf8';
+      ctx.font = 'bold 11px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(
-        `📐 ${zona.nombre} — Aforo: ${zona.aforoMaximo} pax — ${zona.precioBase} ${evento.moneda}`,
-        zx + zw / 2,
-        zy + zh / 2 + 4
+        `${z.nombre} — [Aforo: ${z.aforoMaximo} pax] — ${z.precioBase} ${evento.moneda}`,
+        z.x + z.ancho / 2,
+        z.y + z.alto / 2 + 4
       );
       ctx.restore();
     });
 
-    // 2. FILAS DE BUTACAS TRADICIONALES
-    if (filas && filas.length > 0) {
-      const startY = 125;
-      filas.forEach((fila, fIndex) => {
-        const y = fila.yOffset !== undefined ? fila.yOffset : startY + fIndex * 42;
-        const esSel = elementoSeleccionado?.tipo === 'fila' && elementoSeleccionado.id === fila.id;
+    // 5. Filas de Asientos (Rectas y Curvas en Abanico / Herradura)
+    filas.forEach((fila, fIndex) => {
+      const esSel = elementoSeleccionado?.tipo === 'fila' && elementoSeleccionado.id === fila.id;
+      const startY = fila.yOffset !== undefined ? fila.yOffset : 130 + fIndex * 42;
+      const curvatura = fila.curvatura || 0;
+      const xBase = (fila.xOffset || 0) + 500;
 
-        ctx.fillStyle = fila.color || '#a5b4fc';
-        ctx.font = 'bold 11px "Plus Jakarta Sans", sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText(`${fila.nombre}`, 20, y + 14);
+      ctx.fillStyle = esSel ? '#38bdf8' : fila.color || '#a5b4fc';
+      ctx.font = 'bold 11px system-ui, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(fila.nombre, xBase - (fila.asientos * 30) / 2 - 20, startY + 12);
 
-        const seatSpacing = 32;
-        const totalRowWidth = fila.asientos * seatSpacing;
-        const startX = Math.max(160, (w - totalRowWidth) / 2 + 50);
+      for (let i = 0; i < fila.asientos; i++) {
+        let seatX = 0;
+        let seatY = 0;
 
-        for (let i = 0; i < fila.asientos; i++) {
-          const cx = startX + i * seatSpacing + 12;
-          const cy = y + 12;
-
-          ctx.beginPath();
-          ctx.arc(cx, cy, 11, 0, Math.PI * 2);
-          ctx.fillStyle = esSel ? '#38bdf8' : '#1e293b';
-          ctx.strokeStyle = esSel ? '#ffffff' : fila.color || '#64748b';
-          ctx.lineWidth = esSel ? 2.5 : 1.5;
-          ctx.fill();
-          ctx.stroke();
-
-          ctx.fillStyle = '#ffffff';
-          ctx.font = 'bold 8.5px "JetBrains Mono", monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText(`${i + 1}`, cx, cy + 3.5);
+        if (curvatura > 0) {
+          // Disposición en abanico / curva (Radial)
+          const angleSpan = (fila.asientos * 3.5 * Math.PI) / 180;
+          const startAngle = -Math.PI / 2 - angleSpan / 2;
+          const currentAngle = startAngle + (i / (fila.asientos - 1 || 1)) * angleSpan;
+          seatX = xBase + Math.cos(currentAngle) * curvatura;
+          seatY = startY + Math.sin(currentAngle) * curvatura + curvatura;
+        } else {
+          // Disposición recta tradicional
+          const spacing = 32;
+          const totalWidth = fila.asientos * spacing;
+          seatX = xBase - totalWidth / 2 + i * spacing + 16;
+          seatY = startY;
         }
-      });
-    }
 
-    // 3. MESAS GEOMÉTRICAS (Redondas, Cuadradas, Hexagonales, Octogonales, Triangulares)
+        ctx.beginPath();
+        ctx.arc(seatX, seatY, 11, 0, Math.PI * 2);
+        ctx.fillStyle = esSel ? '#0284c7' : '#1e293b';
+        ctx.strokeStyle = esSel ? '#ffffff' : fila.color || '#64748b';
+        ctx.lineWidth = esSel ? 2.5 : 1.5;
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${i + 1}`, seatX, seatY + 3.5);
+      }
+    });
+
+    // 6. Mesas Geométricas Lounge
     mesas.forEach((mesa) => {
-      const mx = mesa.x || w / 2;
-      const my = mesa.y || 340;
-      const radioMesa = mesa.tamano || 24;
+      const mx = mesa.x || 500;
+      const my = mesa.y || 360;
+      const radio = mesa.tamano || 24;
       const esSel = elementoSeleccionado?.tipo === 'mesa' && elementoSeleccionado.id === mesa.id;
 
       ctx.save();
-      ctx.fillStyle = esSel ? 'rgba(99, 102, 241, 0.4)' : '#1e1b4b';
-      ctx.strokeStyle = esSel ? '#a5b4fc' : '#818cf8';
+      ctx.fillStyle = esSel ? 'rgba(99, 102, 241, 0.45)' : '#1e1b4b';
+      ctx.strokeStyle = esSel ? '#38bdf8' : '#818cf8';
       ctx.lineWidth = esSel ? 3 : 2;
 
-      // Dibujar la geometría específica de la mesa
       switch (mesa.forma) {
         case 'REDONDA':
           ctx.beginPath();
-          ctx.arc(mx, my, radioMesa, 0, Math.PI * 2);
+          ctx.arc(mx, my, radio, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
           break;
         case 'CUADRADA':
           ctx.beginPath();
-          ctx.roundRect(mx - radioMesa, my - radioMesa, radioMesa * 2, radioMesa * 2, 8);
+          ctx.roundRect(mx - radio, my - radio, radio * 2, radio * 2, 8);
           ctx.fill();
           ctx.stroke();
           break;
         case 'HEXAGONAL':
-          dibujarPoligono(ctx, mx, my, radioMesa, 6, Math.PI / 6);
+          dibujarPoligono(ctx, mx, my, radio, 6, Math.PI / 6);
           ctx.fill();
           ctx.stroke();
           break;
         case 'OCTOGONAL':
-          dibujarPoligono(ctx, mx, my, radioMesa, 8, Math.PI / 8);
+          dibujarPoligono(ctx, mx, my, radio, 8, Math.PI / 8);
           ctx.fill();
           ctx.stroke();
           break;
         case 'TRIANGULAR':
-          dibujarPoligono(ctx, mx, my, radioMesa, 3, -Math.PI / 2);
+          dibujarPoligono(ctx, mx, my, radio, 3, -Math.PI / 2);
           ctx.fill();
           ctx.stroke();
           break;
-        default:
-          ctx.beginPath();
-          ctx.arc(mx, my, radioMesa, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
       }
 
-      // Identificador de la mesa en el centro
       ctx.fillStyle = '#e0e7ff';
-      ctx.font = 'bold 9px "Plus Jakarta Sans", sans-serif';
+      ctx.font = 'bold 9px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(mesa.id, mx, my + 3.5);
       ctx.restore();
 
-      // Dibujar Sillas asociadas
-      const sillasCount = mesa.sillas || 4;
-      const disposicion = mesa.disposicionSillas || 'ALREDEDOR';
-
-      for (let s = 0; s < sillasCount; s++) {
-        let sx = 0;
-        let sy = 0;
-
-        if (disposicion === 'FRONTAL') {
-          const espaciado = 26;
-          const startX = mx - ((sillasCount - 1) * espaciado) / 2;
-          sx = startX + s * espaciado;
-          sy = my + radioMesa + 18;
-        } else {
-          const angulo = (s * 2 * Math.PI) / sillasCount - Math.PI / 2;
-          sx = mx + Math.cos(angulo) * (radioMesa + 18);
-          sy = my + Math.sin(angulo) * (radioMesa + 18);
-        }
+      // Sillas satélite
+      const sillas = mesa.sillas || 4;
+      for (let s = 0; s < sillas; s++) {
+        const angulo = (s * 2 * Math.PI) / sillas - Math.PI / 2;
+        const sx = mx + Math.cos(angulo) * (radio + 16);
+        const sy = my + Math.sin(angulo) * (radio + 16);
 
         ctx.beginPath();
-        ctx.arc(sx, sy, 9, 0, Math.PI * 2);
-        ctx.fillStyle = esSel ? '#4f46e5' : '#0f172a';
-        ctx.strokeStyle = esSel ? '#c7d2fe' : '#818cf8';
-        ctx.lineWidth = 1.5;
+        ctx.arc(sx, sy, 8, 0, Math.PI * 2);
+        ctx.fillStyle = '#0f172a';
+        ctx.strokeStyle = '#818cf8';
+        ctx.lineWidth = 1.2;
         ctx.fill();
         ctx.stroke();
 
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 7.5px monospace';
+        ctx.font = 'bold 7px monospace';
         ctx.textAlign = 'center';
         ctx.fillText(`${s + 1}`, sx, sy + 2.5);
       }
-
-      // Nombre y precio debajo de la mesa
-      ctx.fillStyle = esSel ? '#a5b4fc' : '#cbd5e1';
-      ctx.font = 'bold 9.5px "Plus Jakarta Sans", sans-serif';
-      ctx.textAlign = 'center';
-      const rotuloY = my + radioMesa + (disposicion === 'FRONTAL' ? 34 : 30);
-      ctx.fillText(`${mesa.nombre} (${mesa.precioSillaBase} ${evento.moneda}/silla)`, mx, rotuloY);
     });
 
-    // 4. PALCOS VIP (Mesas Numeradas y Sillas Adicionales)
-    palcos.forEach((palco) => {
-      const px = palco.x || 100;
-      const py = palco.y || 440;
-      const pw = palco.ancho || 270;
-      const ph = palco.alto || 125;
-      const esSel = elementoSeleccionado?.tipo === 'palco' && elementoSeleccionado.id === palco.id;
-      const totalSillas = palco.capacidad + (palco.sillasAdicionales || 0);
-      const modo = palco.modoVenta || 'INDIVIDUAL';
+    // 7. Palcos VIP / Suites
+    palcos.forEach((p) => {
+      const px = p.x || 100;
+      const py = p.y || 460;
+      const pw = p.ancho || 260;
+      const ph = p.alto || 120;
+      const esSel = elementoSeleccionado?.tipo === 'palco' && elementoSeleccionado.id === p.id;
+      const totalSillas = p.capacidad + (p.sillasAdicionales || 0);
 
       ctx.save();
-      // Recuadro del Palco
       ctx.beginPath();
       ctx.roundRect(px, py, pw, ph, 12);
-      ctx.fillStyle = esSel ? 'rgba(236, 72, 153, 0.2)' : 'rgba(15, 23, 42, 0.85)';
-      ctx.strokeStyle = esSel ? '#f43f5e' : modo === 'COMPLETO' ? '#eab308' : '#a855f7';
+      ctx.fillStyle = esSel ? 'rgba(168, 85, 247, 0.25)' : 'rgba(15, 23, 42, 0.85)';
+      ctx.strokeStyle = esSel ? '#38bdf8' : p.modoVenta === 'COMPLETO' ? '#eab308' : '#a855f7';
       ctx.lineWidth = esSel ? 3 : 2;
       ctx.fill();
       ctx.stroke();
 
-      // Cinta de Cabecera
-      ctx.fillStyle =
-        modo === 'COMPLETO' ? 'rgba(234, 179, 8, 0.25)' : 'rgba(168, 85, 247, 0.25)';
+      // Encabezado del Palco
+      ctx.fillStyle = p.modoVenta === 'COMPLETO' ? 'rgba(234, 179, 8, 0.2)' : 'rgba(168, 85, 247, 0.2)';
       ctx.beginPath();
-      ctx.roundRect(px, py, pw, 26, [12, 12, 0, 0]);
+      ctx.roundRect(px, py, pw, 24, [12, 12, 0, 0]);
       ctx.fill();
 
-      // Nombre del palco
-      ctx.fillStyle = modo === 'COMPLETO' ? '#fde047' : '#d8b4fe';
-      ctx.font = 'bold 10px "Plus Jakarta Sans", sans-serif';
+      ctx.fillStyle = p.modoVenta === 'COMPLETO' ? '#fde047' : '#d8b4fe';
+      ctx.font = 'bold 10px system-ui, sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText(`👑 ${palco.nombre}`, px + 10, py + 17);
+      ctx.fillText(`★ ${p.nombre}`, px + 10, py + 16);
 
-      // Modalidad de venta
-      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = '#cbd5e1';
       ctx.font = 'bold 8px monospace';
       ctx.textAlign = 'right';
-      const badgeModo =
-        modo === 'COMPLETO'
-          ? 'VENTA COMPLETA'
-          : modo === 'PAREJAS'
-          ? 'VENTA EN PAREJAS'
-          : 'VENTA INDIVIDUAL';
-      ctx.fillText(badgeModo, px + pw - 10, py + 17);
-
-      // Mesa central del Palco
-      const tcx = px + pw / 2;
-      const tcy = py + ph / 2 + 6;
-      ctx.beginPath();
-      ctx.roundRect(tcx - 34, tcy - 12, 68, 24, 6);
-      ctx.fillStyle = '#1e1b4b';
-      ctx.strokeStyle = '#c084fc';
-      ctx.lineWidth = 1.2;
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = '#e9d5ff';
-      ctx.font = 'bold 8.5px "Plus Jakarta Sans", sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(`Mesa (${totalSillas}p)`, tcx, tcy + 3.5);
-
-      // Sillas arriba y abajo de la mesa del palco
-      const sillasSup = Math.ceil(totalSillas / 2);
-      const sillasInf = Math.floor(totalSillas / 2);
-
-      const espaciadoSup = Math.min(28, (pw - 40) / (sillasSup || 1));
-      const startXSup = tcx - ((sillasSup - 1) * espaciadoSup) / 2;
-
-      for (let i = 0; i < sillasSup; i++) {
-        const sx = startXSup + i * espaciadoSup;
-        const sy = tcy - 24;
-        const esAdicional = i + 1 > palco.capacidad;
-
-        ctx.beginPath();
-        ctx.arc(sx, sy, 9, 0, Math.PI * 2);
-        ctx.fillStyle = esAdicional ? '#701a75' : '#312e81';
-        ctx.strokeStyle = esAdicional ? '#f472b6' : '#c084fc';
-        ctx.lineWidth = 1.2;
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 7.5px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText(`${i + 1}`, sx, sy + 2.5);
-      }
-
-      const espaciadoInf = Math.min(28, (pw - 40) / (sillasInf || 1));
-      const startXInf = tcx - ((sillasInf - 1) * espaciadoInf) / 2;
-
-      for (let i = 0; i < sillasInf; i++) {
-        const sIdx = sillasSup + i + 1;
-        const sx = startXInf + i * espaciadoInf;
-        const sy = tcy + 24;
-        const esAdicional = sIdx > palco.capacidad;
-
-        ctx.beginPath();
-        ctx.arc(sx, sy, 9, 0, Math.PI * 2);
-        ctx.fillStyle = esAdicional ? '#701a75' : '#312e81';
-        ctx.strokeStyle = esAdicional ? '#f472b6' : '#c084fc';
-        ctx.lineWidth = 1.2;
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 7.5px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText(`${sIdx}`, sx, sy + 2.5);
-      }
-
-      // Precio en el pie del palco
-      ctx.fillStyle = '#cbd5e1';
-      ctx.font = 'normal 8.5px "Plus Jakarta Sans", sans-serif';
-      ctx.textAlign = 'center';
-      const precioTexto =
-        modo === 'COMPLETO'
-          ? `Total Palco: ${palco.precioPalcoBase} ${evento.moneda}`
-          : `${palco.precioSillaIndividual || palco.precioPalcoBase / totalSillas} ${evento.moneda}/silla`;
-      ctx.fillText(precioTexto, tcx, py + ph - 8);
-
+      ctx.fillText(`${p.modoVenta || 'INDIVIDUAL'} (${totalSillas}p)`, px + pw - 10, py + 16);
       ctx.restore();
     });
 
-    // 5. PREVIEW EN VIVO DE DIBUJO DE ZONA (DURANTE MOUSE ARRASTRE)
-    if (dibujoZonaActual) {
-      const rx = Math.min(dibujoZonaActual.startX, dibujoZonaActual.currentX);
-      const ry = Math.min(dibujoZonaActual.startY, dibujoZonaActual.currentY);
-      const rw = Math.abs(dibujoZonaActual.currentX - dibujoZonaActual.startX);
-      const rh = Math.abs(dibujoZonaActual.currentY - dibujoZonaActual.startY);
+    // 8. Trazo de dibujo de zona en tiempo real
+    if (dibujoZonaRef.current) {
+      const dz = dibujoZonaRef.current;
+      const rx = Math.min(dz.startX, dz.currentX);
+      const ry = Math.min(dz.startY, dz.currentY);
+      const rw = Math.abs(dz.currentX - dz.startX);
+      const rh = Math.abs(dz.currentY - dz.startY);
 
       ctx.save();
-      ctx.fillStyle = 'rgba(56, 189, 248, 0.2)';
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.25)';
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 2;
       ctx.setLineDash([6, 4]);
@@ -557,117 +431,122 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       ctx.roundRect(rx, ry, rw, rh, 8);
       ctx.fill();
       ctx.stroke();
-
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 11px "Plus Jakarta Sans", sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(`📐 Zona Nueva (${rw}x${rh}px)`, rx + rw / 2, ry + rh / 2);
       ctx.restore();
     }
-  }, [
-    imagenFondo,
-    imagenFondoOpacidad,
-    imagenCargada,
-    filas,
-    mesas,
-    palcos,
-    zonasDePie,
-    elementoSeleccionado,
-    dibujoZonaActual,
-    evento.moneda,
-  ]);
 
-  // Manejo de Interacción de Ratón en el Canvas (Arrastrar, Seleccionar, Dibujar)
-  const getCanvasCoords = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    ctx.restore();
+  }, [filas, mesas, palcos, zonasDePie, elementoSeleccionado, zoom, pan, imagenFondoOpacidad, evento.moneda]);
+
+  useEffect(() => {
+    renderizar();
+  }, [renderizar]);
+
+  // Transformar coordenadas de pantalla a espacio virtual del lienzo
+  const transformarCoordenadas = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
+    const clientX = e.clientX - rect.left;
+    const clientY = e.clientY - rect.top;
     return {
-      x: (e.clientX - rect.left) * scaleX,
-      y: (e.clientY - rect.top) * scaleY,
+      x: (clientX - pan.x) / zoom,
+      y: (clientY - pan.y) / zoom,
     };
   };
 
+  // Gestión de Eventos del Ratón
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const { x, y } = getCanvasCoords(e);
+    const { x, y } = transformarCoordenadas(e);
 
-    // Si estamos en modo de dibujar zona
-    if (modoHerramienta === 'dibujar_zona') {
-      setDibujoZonaActual({ startX: x, startY: y, currentX: x, currentY: y });
+    if (herramienta === 'pan' || e.button === 1 || e.spaceKey) {
+      isDraggingRef.current = true;
+      dragStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
       return;
     }
 
-    // 1. Verificar si hizo clic en un Palco
-    for (const palco of [...palcos].reverse()) {
-      const px = palco.x || 100;
-      const py = palco.y || 440;
-      const pw = palco.ancho || 270;
-      const ph = palco.alto || 125;
+    if (herramienta === 'dibujar_zona') {
+      dibujoZonaRef.current = { startX: x, startY: y, currentX: x, currentY: y };
+      renderizar();
+      return;
+    }
 
+    // Comprobar colisión con Palcos
+    for (const p of [...palcos].reverse()) {
+      const px = p.x || 100;
+      const py = p.y || 460;
+      const pw = p.ancho || 260;
+      const ph = p.alto || 120;
       if (x >= px && x <= px + pw && y >= py && y <= py + ph) {
-        setElementoSeleccionado({ tipo: 'palco', id: palco.id });
-        setIsDragging(true);
-        setDragOffset({ x: x - px, y: y - py });
+        setElementoSeleccionado({ tipo: 'palco', id: p.id });
+        isDraggingRef.current = true;
+        elementoOffsetRef.current = { x: x - px, y: y - py };
         return;
       }
     }
 
-    // 2. Verificar si hizo clic en una Mesa
-    for (const mesa of [...mesas].reverse()) {
-      const mx = mesa.x || 450;
-      const my = mesa.y || 340;
-      const radio = (mesa.tamano || 24) + 20;
-
+    // Comprobar colisión con Mesas
+    for (const m of [...mesas].reverse()) {
+      const mx = m.x || 500;
+      const my = m.y || 360;
+      const rad = (m.tamano || 24) + 20;
       const dx = x - mx;
       const dy = y - my;
-      if (dx * dx + dy * dy <= radio * radio) {
-        setElementoSeleccionado({ tipo: 'mesa', id: mesa.id });
-        setIsDragging(true);
-        setDragOffset({ x: dx, y: dy });
+      if (dx * dx + dy * dy <= rad * rad) {
+        setElementoSeleccionado({ tipo: 'mesa', id: m.id });
+        isDraggingRef.current = true;
+        elementoOffsetRef.current = { x: dx, y: dy };
         return;
       }
     }
 
-    // 3. Verificar si hizo clic en una Zona de Pie
-    for (const zona of [...zonasDePie].reverse()) {
-      if (x >= zona.x && x <= zona.x + zona.ancho && y >= zona.y && y <= zona.y + zona.alto) {
-        setElementoSeleccionado({ tipo: 'zona', id: zona.id });
-        setIsDragging(true);
-        setDragOffset({ x: x - zona.x, y: y - zona.y });
+    // Comprobar colisión con Zonas de Pie
+    for (const z of [...zonasDePie].reverse()) {
+      if (x >= z.x && x <= z.x + z.ancho && y >= z.y && y <= z.y + z.alto) {
+        setElementoSeleccionado({ tipo: 'zona', id: z.id });
+        isDraggingRef.current = true;
+        elementoOffsetRef.current = { x: x - z.x, y: y - z.y };
         return;
       }
     }
 
-    // 4. Clic en espacio vacío: deseleccionar
+    // Comprobar selección de Filas
+    for (const f of filas) {
+      const fy = f.yOffset !== undefined ? f.yOffset : 130;
+      if (Math.abs(y - fy) < 25) {
+        setElementoSeleccionado({ tipo: 'fila', id: f.id });
+        isDraggingRef.current = true;
+        elementoOffsetRef.current = { x: x - (f.xOffset || 0), y: y - fy };
+        return;
+      }
+    }
+
     setElementoSeleccionado(null);
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const { x, y } = getCanvasCoords(e);
-
-    // Si estamos dibujando una zona
-    if (modoHerramienta === 'dibujar_zona' && dibujoZonaActual) {
-      setDibujoZonaActual({
-        ...dibujoZonaActual,
-        currentX: x,
-        currentY: y,
+    if (herramienta === 'pan' && isDraggingRef.current) {
+      setPan({
+        x: e.clientX - dragStartRef.current.x,
+        y: e.clientY - dragStartRef.current.y,
       });
       return;
     }
 
-    // Si estamos arrastrando un elemento seleccionado
-    if (isDragging && elementoSeleccionado) {
+    const { x, y } = transformarCoordenadas(e);
+
+    if (herramienta === 'dibujar_zona' && dibujoZonaRef.current) {
+      dibujoZonaRef.current.currentX = x;
+      dibujoZonaRef.current.currentY = y;
+      renderizar();
+      return;
+    }
+
+    if (isDraggingRef.current && elementoSeleccionado) {
       if (elementoSeleccionado.tipo === 'palco') {
         setPalcos((prev) =>
           prev.map((p) =>
             p.id === elementoSeleccionado.id
-              ? {
-                  ...p,
-                  x: Math.max(10, Math.min(canvasRef.current?.width! - (p.ancho || 270) - 10, x - dragOffset.x)),
-                  y: Math.max(60, Math.min(canvasRef.current?.height! - (p.alto || 125) - 10, y - dragOffset.y)),
-                }
+              ? { ...p, x: Math.round(x - elementoOffsetRef.current.x), y: Math.round(y - elementoOffsetRef.current.y) }
               : p
           )
         );
@@ -675,11 +554,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
         setMesas((prev) =>
           prev.map((m) =>
             m.id === elementoSeleccionado.id
-              ? {
-                  ...m,
-                  x: Math.max(40, Math.min(canvasRef.current?.width! - 40, x - dragOffset.x)),
-                  y: Math.max(70, Math.min(canvasRef.current?.height! - 40, y - dragOffset.y)),
-                }
+              ? { ...m, x: Math.round(x - elementoOffsetRef.current.x), y: Math.round(y - elementoOffsetRef.current.y) }
               : m
           )
         );
@@ -687,12 +562,16 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
         setZonasDePie((prev) =>
           prev.map((z) =>
             z.id === elementoSeleccionado.id
-              ? {
-                  ...z,
-                  x: Math.max(10, Math.min(canvasRef.current?.width! - z.ancho - 10, x - dragOffset.x)),
-                  y: Math.max(60, Math.min(canvasRef.current?.height! - z.alto - 10, y - dragOffset.y)),
-                }
+              ? { ...z, x: Math.round(x - elementoOffsetRef.current.x), y: Math.round(y - elementoOffsetRef.current.y) }
               : z
+          )
+        );
+      } else if (elementoSeleccionado.tipo === 'fila') {
+        setFilas((prev) =>
+          prev.map((f) =>
+            f.id === elementoSeleccionado.id
+              ? { ...f, yOffset: Math.round(y - elementoOffsetRef.current.y), xOffset: Math.round(x - elementoOffsetRef.current.x) }
+              : f
           )
         );
       }
@@ -700,21 +579,21 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
   };
 
   const handleMouseUp = () => {
-    // Si terminamos de dibujar una zona
-    if (modoHerramienta === 'dibujar_zona' && dibujoZonaActual) {
-      const rx = Math.round(Math.min(dibujoZonaActual.startX, dibujoZonaActual.currentX));
-      const ry = Math.round(Math.min(dibujoZonaActual.startY, dibujoZonaActual.currentY));
-      const rw = Math.round(Math.abs(dibujoZonaActual.currentX - dibujoZonaActual.startX));
-      const rh = Math.round(Math.abs(dibujoZonaActual.currentY - dibujoZonaActual.startY));
+    if (herramienta === 'dibujar_zona' && dibujoZonaRef.current) {
+      const dz = dibujoZonaRef.current;
+      const rx = Math.round(Math.min(dz.startX, dz.currentX));
+      const ry = Math.round(Math.min(dz.startY, dz.currentY));
+      const rw = Math.round(Math.abs(dz.currentX - dz.startX));
+      const rh = Math.round(Math.abs(dz.currentY - dz.startY));
 
-      if (rw > 30 && rh > 20) {
-        const nuevaZonaId = `z-custom-${Date.now().toString().slice(-4)}`;
+      if (rw > 40 && rh > 30) {
+        const id = `zp-${Date.now().toString().slice(-4)}`;
         const nuevaZona: ZonaDePie = {
-          id: nuevaZonaId,
+          id,
           nombre: `Zona Admisión #${zonasDePie.length + 1}`,
           color: '#38bdf8',
-          precioBase: 35.0,
-          aforoMaximo: Math.max(50, Math.round((rw * rh) / 25)),
+          precioBase: 40.0,
+          aforoMaximo: Math.max(50, Math.round((rw * rh) / 30)),
           vendidas: 0,
           x: rx,
           y: ry,
@@ -722,128 +601,39 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
           alto: rh,
         };
         setZonasDePie([...zonasDePie, nuevaZona]);
-        setElementoSeleccionado({ tipo: 'zona', id: nuevaZonaId });
+        setElementoSeleccionado({ tipo: 'zona', id });
       }
-      setDibujoZonaActual(null);
-      setModoHerramienta('seleccionar');
-      return;
+      dibujoZonaRef.current = null;
+      setHerramienta('seleccionar');
     }
-
-    setIsDragging(false);
+    isDraggingRef.current = false;
   };
 
-  // ACCIONES DE AGREGAR ELEMENTOS CON PRESETS VISUALES
-  const agregarPalcoConCapacidad = (capacidadBase: number) => {
-    const id = `P${palcos.length + 1}`;
-    const nuevo: PalcoVIP = {
-      id,
-      nombre: `Palco VIP #${palcos.length + 1}`,
-      capacidad: capacidadBase,
-      sillasAdicionales: 0,
-      precioPalcoBase: capacidadBase * 60,
-      modoVenta: 'INDIVIDUAL',
-      precioSillaIndividual: 60,
-      x: 80 + (palcos.length % 3) * 280,
-      y: 430 + Math.floor(palcos.length / 3) * 140,
-      ancho: 270,
-      alto: 125,
+  // Zoom interactivo con rueda del ratón
+  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.08 : 0.92;
+    setZoom((prev) => Math.min(2.5, Math.max(0.4, Number((prev * factor).toFixed(2)))));
+  };
+
+  // Generador de Bloque de Gradas Curvas / Rectas
+  const agregarBloqueGradas = (tipo: 'recta' | 'curva') => {
+    const idNum = filas.length + 1;
+    const nuevaFila: FilaExtendida = {
+      id: `f-${String.fromCharCode(64 + idNum)}`,
+      nombre: `Fila ${String.fromCharCode(64 + idNum)}`,
+      precioBase: 65.0,
+      asientos: 12,
+      color: '#6366f1',
+      yOffset: 120 + filas.length * 40,
+      xOffset: 0,
+      curvatura: tipo === 'curva' ? 380 : 0,
     };
-    setPalcos([...palcos, nuevo]);
-    setElementoSeleccionado({ tipo: 'palco', id });
+    setFilas([...filas, nuevaFila]);
+    setElementoSeleccionado({ tipo: 'fila', id: nuevaFila.id });
   };
 
-  const agregarMesaGeometrica = (forma: FormaMesa, sillasDefault: number) => {
-    const id = `M${mesas.length + 1}`;
-    const nueva: MesaEspecial = {
-      id,
-      nombre: `Mesa ${forma.toLowerCase()} #${mesas.length + 1}`,
-      forma,
-      sillas: sillasDefault,
-      disposicionSillas: 'ALREDEDOR',
-      precioSillaBase: 50.0,
-      tamano: forma === 'OCTOGONAL' ? 28 : forma === 'HEXAGONAL' ? 25 : 22,
-      x: 200 + (mesas.length % 4) * 180,
-      y: 280 + Math.floor(mesas.length / 4) * 100,
-    };
-    setMesas([...mesas, nueva]);
-    setElementoSeleccionado({ tipo: 'mesa', id });
-  };
-
-  // Modificación interactiva de Palco seleccionado
-  const palcoActivo = palcos.find((p) => p.id === elementoSeleccionado?.id);
-  const mesaActiva = mesas.find((m) => m.id === elementoSeleccionado?.id);
-  const zonaActiva = zonasDePie.find((z) => z.id === elementoSeleccionado?.id);
-
-  // Adicionar Silla a un Palco (Directamente incrementa las sillas)
-  const adicionarSillaPalco = (palcoId: string, delta: number) => {
-    setPalcos((prev) =>
-      prev.map((p) => {
-        if (p.id !== palcoId) return p;
-        const actuales = p.sillasAdicionales || 0;
-        const nuevas = Math.max(0, actuales + delta);
-        return {
-          ...p,
-          sillasAdicionales: nuevas,
-        };
-      })
-    );
-  };
-
-  // Eliminar elemento seleccionado
-  const eliminarElementoSeleccionado = () => {
-    if (!elementoSeleccionado) return;
-    if (elementoSeleccionado.tipo === 'palco') {
-      setPalcos(palcos.filter((p) => p.id !== elementoSeleccionado.id));
-    } else if (elementoSeleccionado.tipo === 'mesa') {
-      setMesas(mesas.filter((m) => m.id !== elementoSeleccionado.id));
-    } else if (elementoSeleccionado.tipo === 'zona') {
-      setZonasDePie(zonasDePie.filter((z) => z.id !== elementoSeleccionado.id));
-    } else if (elementoSeleccionado.tipo === 'fila') {
-      setFilas(filas.filter((f) => f.id !== elementoSeleccionado.id));
-    }
-    setElementoSeleccionado(null);
-  };
-
-  // Duplicar elemento seleccionado
-  const duplicarElementoSeleccionado = () => {
-    if (!elementoSeleccionado) return;
-    if (elementoSeleccionado.tipo === 'palco' && palcoActivo) {
-      const nuevoId = `P${palcos.length + 1}`;
-      const duplicado: PalcoVIP = {
-        ...palcoActivo,
-        id: nuevoId,
-        nombre: `${palcoActivo.nombre} (Copia)`,
-        x: (palcoActivo.x || 100) + 30,
-        y: (palcoActivo.y || 440) + 30,
-      };
-      setPalcos([...palcos, duplicado]);
-      setElementoSeleccionado({ tipo: 'palco', id: nuevoId });
-    } else if (elementoSeleccionado.tipo === 'mesa' && mesaActiva) {
-      const nuevoId = `M${mesas.length + 1}`;
-      const duplicada: MesaEspecial = {
-        ...mesaActiva,
-        id: nuevoId,
-        nombre: `${mesaActiva.nombre} (Copia)`,
-        x: (mesaActiva.x || 200) + 30,
-        y: (mesaActiva.y || 280) + 30,
-      };
-      setMesas([...mesas, duplicada]);
-      setElementoSeleccionado({ tipo: 'mesa', id: nuevoId });
-    } else if (elementoSeleccionado.tipo === 'zona' && zonaActiva) {
-      const nuevoId = `z-${Date.now().toString().slice(-4)}`;
-      const duplicada: ZonaDePie = {
-        ...zonaActiva,
-        id: nuevoId,
-        nombre: `${zonaActiva.nombre} (Copia)`,
-        x: zonaActiva.x + 30,
-        y: zonaActiva.y + 30,
-      };
-      setZonasDePie([...zonasDePie, duplicada]);
-      setElementoSeleccionado({ tipo: 'zona', id: nuevoId });
-    }
-  };
-
-  // Guardar todo en Backend
+  // Guardar en producción
   const handleGuardarTodo = async () => {
     setGuardando(true);
     setGuardadoExito(false);
@@ -857,15 +647,12 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
         palcos,
         zonasDePie,
       });
-
       if (onActualizarEvento) {
         await onActualizarEvento({
           tipoEvento,
           diasFeria,
-          fechasFeria,
         });
       }
-
       setGuardadoExito(true);
       setTimeout(() => setGuardadoExito(false), 3000);
     } finally {
@@ -873,654 +660,438 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     }
   };
 
+  // Elementos activos para el Inspector
+  const filaActiva = filas.find((f) => f.id === elementoSeleccionado?.id);
+  const mesaActiva = mesas.find((m) => m.id === elementoSeleccionado?.id);
+  const palcoActivo = palcos.find((p) => p.id === elementoSeleccionado?.id);
+  const zonaActiva = zonasDePie.find((z) => z.id === elementoSeleccionado?.id);
+
   return (
-    <div className="space-y-6 animate-fadeIn">
-      {/* Header del Super Administrador */}
-      <div className="glass-panel rounded-3xl p-6 border border-purple-500/30 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-gradient-to-r from-purple-950/40 via-indigo-950/30 to-slate-900 shadow-2xl">
+    <div className="space-y-6">
+      {/* Barra de Control Superior */}
+      <div className="glass-panel p-5 rounded-3xl border border-white/10 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <div className="flex flex-wrap items-center gap-2 mb-1.5">
-            <span className="text-[10px] uppercase font-black tracking-widest text-purple-300 bg-purple-500/20 px-3 py-1 rounded-full border border-purple-500/40 flex items-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 text-purple-400" />
-              SUPER ADMINISTRADOR — ARQUITECTO DE RECINTOS
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+              Studio SeatMap Engine Pro
             </span>
-            <span className="text-xs text-slate-400 font-semibold">{evento.lugar} ({evento.ciudad})</span>
+            <span className="text-xs text-slate-400">Recinto: {evento.lugar}</span>
           </div>
-          <h2 className="text-xl md:text-2xl font-black text-white">
-            Diseñador Visual de Aforo y Asientos: {evento.nombre}
-          </h2>
-          <p className="text-xs text-slate-400 mt-1">
-            Carga el plano arquitectónico de fondo y sitúa de forma interactiva palcos con venta completa/individual, mesas geométricas y zonas de pie.
-          </p>
+          <h2 className="text-xl font-black text-white mt-1">Diseñador Vectorial de Aforo y Asientos</h2>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
-          {onCambiarTab && (
+        {/* Controles de Zoom, Modo y Guardado */}
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+          <div className="flex items-center bg-slate-900 border border-white/10 rounded-2xl p-1">
             <button
-              onClick={() => onCambiarTab('b2c')}
-              className="px-4 py-2.5 rounded-2xl bg-white/5 hover:bg-white/10 text-slate-300 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer border border-white/10"
-              title="Ver cómo lo ve el comprador fan en taquilla"
+              onClick={() => setHerramienta('seleccionar')}
+              className={`p-2 rounded-xl text-xs font-bold transition ${
+                herramienta === 'seleccionar' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+              }`}
+              title="Herramienta Selección"
             >
-              <Eye className="w-4 h-4 text-sky-400" />
-              <span>Vista Fan Taquilla</span>
+              <MousePointer className="w-4 h-4" />
             </button>
-          )}
+            <button
+              onClick={() => setHerramienta('pan')}
+              className={`p-2 rounded-xl text-xs font-bold transition ${
+                herramienta === 'pan' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+              }`}
+              title="Mover Lienzo (Pan)"
+            >
+              <Hand className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setHerramienta('dibujar_zona')}
+              className={`p-2 rounded-xl text-xs font-bold transition ${
+                herramienta === 'dibujar_zona' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
+              }`}
+              title="Dibujar Zona de Pie"
+            >
+              <Square className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex items-center bg-slate-900 border border-white/10 rounded-2xl p-1 gap-1">
+            <button
+              onClick={() => setZoom((z) => Math.max(0.4, Number((z - 0.15).toFixed(2))))}
+              className="p-2 text-slate-400 hover:text-white rounded-xl"
+            >
+              <ZoomOut className="w-4 h-4" />
+            </button>
+            <span className="text-xs font-mono font-bold text-white px-1.5">{Math.round(zoom * 100)}%</span>
+            <button
+              onClick={() => setZoom((z) => Math.min(2.5, Number((z + 0.15).toFixed(2))))}
+              className="p-2 text-slate-400 hover:text-white rounded-xl"
+            >
+              <ZoomIn className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => {
+                setZoom(1);
+                setPan({ x: 0, y: 0 });
+              }}
+              className="p-2 text-slate-400 hover:text-white rounded-xl"
+              title="Restablecer Vista"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+          </div>
 
           <button
             onClick={handleGuardarTodo}
             disabled={guardando}
-            className="px-6 py-2.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/20 transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+            className="px-6 py-2.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/25 transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
           >
             {guardadoExito ? (
               <>
-                <CheckCircle2 className="w-4 h-4 text-slate-950" />
-                <span>¡Mapa Guardado en el Servidor!</span>
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Guardado Exitoso!</span>
               </>
             ) : guardando ? (
-              <>
-                <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin"></div>
-                <span>Guardando Plano...</span>
-              </>
+              <span>Guardando...</span>
             ) : (
               <>
-                <Save className="w-4 h-4 text-slate-950" />
-                <span>Guardar Mapa del Recinto</span>
+                <Save className="w-4 h-4" />
+                <span>Guardar Plano</span>
               </>
             )}
           </button>
         </div>
       </div>
 
-      {/* Selector de Modalidad del Evento: Concierto Único vs Feria Multidía */}
-      <div className="glass-panel rounded-3xl p-5 border border-white/10 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-950/60">
-        <div className="flex items-center gap-3">
-          <Calendar className="w-5 h-5 text-indigo-400" />
-          <div>
-            <span className="text-xs font-bold text-white block">
-              Tipo de Evento y Gestión de Jornadas
-            </span>
-            <span className="text-[11px] text-slate-400">
-              Define si el aforo y la venta operan en un solo día o en múltiples fechas tipo feria
-            </span>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center bg-slate-900 p-1 rounded-2xl border border-white/10">
-            <button
-              onClick={() => setTipoEvento('CONCIERTO_UNICO')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
-                tipoEvento === 'CONCIERTO_UNICO'
-                  ? 'bg-indigo-600 text-white shadow'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              🎤 Concierto Único (1 Día)
-            </button>
-            <button
-              onClick={() => setTipoEvento('FERIA_MULTIDIA')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
-                tipoEvento === 'FERIA_MULTIDIA'
-                  ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              🎪 Feria Multidía (Varios Días)
-            </button>
-          </div>
-
-          {tipoEvento === 'FERIA_MULTIDIA' && (
-            <div className="flex items-center gap-2 bg-purple-950/40 border border-purple-500/30 px-3 py-1 rounded-2xl">
-              <span className="text-[10px] text-purple-300 font-bold uppercase">Días Feria:</span>
-              <select
-                value={diasFeria}
-                onChange={(e) => {
-                  const num = parseInt(e.target.value) || 3;
-                  setDiasFeria(num);
-                  setFechasFeria(
-                    Array.from({ length: num }).map((_, i) => `2026-11-${10 + i}`)
-                  );
-                }}
-                className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
-              >
-                <option value={2} className="bg-slate-900">2 Días</option>
-                <option value={3} className="bg-slate-900">3 Días</option>
-                <option value={4} className="bg-slate-900">4 Días</option>
-                <option value={5} className="bg-slate-900">5 Días</option>
-                <option value={7} className="bg-slate-900">7 Días (Semana)</option>
-              </select>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ÁREA PRINCIPAL DEL ESTUDIO */}
+      {/* Grid Principal: Paleta de Elementos + Lienzo + Inspector */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* COLUMNA IZQUIERDA: PALETA VISUAL LATERAL (4 COLUMNAS) */}
+        {/* Columna Izquierda: Toolbox */}
         <div className="lg:col-span-4 space-y-4">
-          <div className="glass-panel rounded-3xl p-5 border border-white/10 space-y-4 bg-slate-950/70">
-            {/* Navegación de la paleta */}
-            <div className="flex flex-wrap items-center gap-1 pb-3 border-b border-white/10">
+          <div className="glass-panel rounded-3xl p-4 border border-white/10 space-y-4">
+            <div className="flex flex-wrap gap-1 pb-3 border-b border-white/10">
               <button
-                onClick={() => setActiveTabToolbox('palcos')}
-                className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${
-                  activeTabToolbox === 'palcos'
-                    ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                onClick={() => setTabActiva('filas')}
+                className={`flex-1 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                  tabActiva === 'filas' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <Crown className="w-3.5 h-3.5" />
-                <span>Palcos</span>
+                <Grid className="w-3.5 h-3.5" />
+                <span>Graderío</span>
               </button>
-
               <button
-                onClick={() => setActiveTabToolbox('mesas')}
-                className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${
-                  activeTabToolbox === 'mesas'
-                    ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                onClick={() => setTabActiva('mesas')}
+                className={`flex-1 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                  tabActiva === 'mesas' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
                 <Coffee className="w-3.5 h-3.5" />
                 <span>Mesas</span>
               </button>
-
               <button
-                onClick={() => setActiveTabToolbox('zonas')}
-                className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${
-                  activeTabToolbox === 'zonas'
-                    ? 'bg-sky-600 text-white shadow-lg shadow-sky-600/30'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                onClick={() => setTabActiva('palcos')}
+                className={`flex-1 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                  tabActiva === 'palcos' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <Layers className="w-3.5 h-3.5" />
-                <span>Zonas</span>
+                <Crown className="w-3.5 h-3.5" />
+                <span>Palcos</span>
               </button>
-
               <button
-                onClick={() => setActiveTabToolbox('fondo')}
-                className={`py-2 px-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${
-                  activeTabToolbox === 'fondo'
-                    ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                onClick={() => setTabActiva('fondo')}
+                className={`p-2 rounded-xl text-xs font-bold transition ${
+                  tabActiva === 'fondo' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
-                title="Cargar y calibrar plano de fondo"
+                title="Plano de Fondo"
               >
-                <ImageIcon className="w-3.5 h-3.5" />
+                <ImageIcon className="w-4 h-4" />
               </button>
             </div>
 
-            {/* SECCIÓN 1: PALCOS VIP CON CANTIDAD DE SILLAS Y MODO VENTA */}
-            {activeTabToolbox === 'palcos' && (
-              <div className="space-y-4 animate-fadeIn">
-                <div className="p-3.5 rounded-2xl bg-purple-950/30 border border-purple-500/20 text-xs text-purple-200">
-                  <span className="font-bold flex items-center gap-1.5 mb-1 text-purple-300">
-                    <Crown className="w-4 h-4 text-amber-400" /> Palcos VIP con Mesas Numeradas
-                  </span>
-                  Sitúa palcos privados con capacidad de 4, 6 o 10 sillas. Podrás añadir más sillas a demanda y configurar si se venden completos, individuales o en parejas.
-                </div>
-
-                <div className="space-y-2">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                    Añadir Palco con Presets Rápidos:
-                  </span>
-                  <div className="grid grid-cols-3 gap-2">
-                    <button
-                      onClick={() => agregarPalcoConCapacidad(4)}
-                      className="p-3 rounded-2xl bg-slate-900 border border-purple-500/30 hover:border-purple-400 text-white font-bold text-xs flex flex-col items-center gap-1 transition cursor-pointer hover:bg-purple-950/40"
-                    >
-                      <Users className="w-4 h-4 text-purple-400" />
-                      <span>4 Sillas</span>
-                      <span className="text-[9px] text-slate-400 font-mono">Básico</span>
-                    </button>
-
-                    <button
-                      onClick={() => agregarPalcoConCapacidad(6)}
-                      className="p-3 rounded-2xl bg-slate-900 border border-purple-500/30 hover:border-purple-400 text-white font-bold text-xs flex flex-col items-center gap-1 transition cursor-pointer hover:bg-purple-950/40"
-                    >
-                      <Crown className="w-4 h-4 text-amber-400" />
-                      <span>6 Sillas</span>
-                      <span className="text-[9px] text-amber-300 font-mono">Premium</span>
-                    </button>
-
-                    <button
-                      onClick={() => agregarPalcoConCapacidad(10)}
-                      className="p-3 rounded-2xl bg-slate-900 border border-purple-500/30 hover:border-purple-400 text-white font-bold text-xs flex flex-col items-center gap-1 transition cursor-pointer hover:bg-purple-950/40"
-                    >
-                      <Sparkles className="w-4 h-4 text-fuchsia-400" />
-                      <span>10 Sillas</span>
-                      <span className="text-[9px] text-fuchsia-300 font-mono">Presidencial</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Lista rápida de palcos existentes */}
-                <div className="space-y-2 pt-2 border-t border-white/5">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                    Palcos en el Plano ({palcos.length}):
-                  </span>
-                  {palcos.length === 0 ? (
-                    <p className="text-xs text-slate-500 italic">No hay palcos situados aún.</p>
-                  ) : (
-                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                      {palcos.map((p) => {
-                        const tot = p.capacidad + (p.sillasAdicionales || 0);
-                        const sel = elementoSeleccionado?.tipo === 'palco' && elementoSeleccionado.id === p.id;
-                        return (
-                          <div
-                            key={p.id}
-                            onClick={() => setElementoSeleccionado({ tipo: 'palco', id: p.id })}
-                            className={`p-2.5 rounded-xl border flex justify-between items-center text-xs cursor-pointer transition ${
-                              sel
-                                ? 'bg-purple-950/60 border-purple-400 text-white'
-                                : 'bg-slate-900/60 border-white/5 text-slate-300 hover:border-purple-500/30'
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <Crown className="w-3.5 h-3.5 text-amber-400" />
-                              <span className="font-bold">{p.nombre}</span>
-                              <span className="text-[10px] text-purple-300">({tot} sillas)</span>
-                            </div>
-                            <span className="text-[10px] font-mono text-emerald-400">
-                              {p.modoVenta === 'COMPLETO' ? `${p.precioPalcoBase}€` : `${p.precioSillaIndividual || p.precioPalcoBase / tot}€/s`}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* SECCIÓN 2: MESAS GEOMÉTRICAS (REDONDAS, CUADRADAS, HEXÁGONOS, ETC.) */}
-            {activeTabToolbox === 'mesas' && (
-              <div className="space-y-4 animate-fadeIn">
-                <div className="p-3.5 rounded-2xl bg-indigo-950/30 border border-indigo-500/20 text-xs text-indigo-200">
-                  <span className="font-bold flex items-center gap-1.5 mb-1 text-indigo-300">
-                    <Coffee className="w-4 h-4 text-indigo-400" /> Mesas Geométricas con Sillas
-                  </span>
-                  Sitúa mesas según diferentes formas geométricas. Las sillas pueden ubicarse alrededor (360°) o alineadas debajo según la arquitectura.
-                </div>
-
-                <div className="space-y-2">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                    Selecciona una Geometría de Mesa:
-                  </span>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => agregarMesaGeometrica('REDONDA', 4)}
-                      className="p-3 rounded-2xl bg-slate-900 border border-indigo-500/30 hover:border-indigo-400 text-white font-bold text-xs flex items-center gap-2 transition cursor-pointer hover:bg-indigo-950/40"
-                    >
-                      <Circle className="w-4 h-4 text-indigo-400" />
-                      <div className="text-left">
-                        <span className="block">Redonda</span>
-                        <span className="text-[9px] text-slate-400">4 Sillas</span>
-                      </div>
-                    </button>
-
-                    <button
-                      onClick={() => agregarMesaGeometrica('CUADRADA', 4)}
-                      className="p-3 rounded-2xl bg-slate-900 border border-indigo-500/30 hover:border-indigo-400 text-white font-bold text-xs flex items-center gap-2 transition cursor-pointer hover:bg-indigo-950/40"
-                    >
-                      <Square className="w-4 h-4 text-sky-400" />
-                      <div className="text-left">
-                        <span className="block">Cuadrada</span>
-                        <span className="text-[9px] text-slate-400">4 Sillas</span>
-                      </div>
-                    </button>
-
-                    <button
-                      onClick={() => agregarMesaGeometrica('HEXAGONAL', 6)}
-                      className="p-3 rounded-2xl bg-slate-900 border border-indigo-500/30 hover:border-indigo-400 text-white font-bold text-xs flex items-center gap-2 transition cursor-pointer hover:bg-indigo-950/40"
-                    >
-                      <Hexagon className="w-4 h-4 text-purple-400" />
-                      <div className="text-left">
-                        <span className="block">Hexagonal</span>
-                        <span className="text-[9px] text-slate-400">6 Sillas</span>
-                      </div>
-                    </button>
-
-                    <button
-                      onClick={() => agregarMesaGeometrica('OCTOGONAL', 8)}
-                      className="p-3 rounded-2xl bg-slate-900 border border-indigo-500/30 hover:border-indigo-400 text-white font-bold text-xs flex items-center gap-2 transition cursor-pointer hover:bg-indigo-950/40"
-                    >
-                      <Octagon className="w-4 h-4 text-amber-400" />
-                      <div className="text-left">
-                        <span className="block">Octogonal</span>
-                        <span className="text-[9px] text-slate-400">8 Sillas</span>
-                      </div>
-                    </button>
-
-                    <button
-                      onClick={() => agregarMesaGeometrica('TRIANGULAR', 3)}
-                      className="p-3 rounded-2xl bg-slate-900 border border-indigo-500/30 hover:border-indigo-400 text-white font-bold text-xs flex items-center gap-2 transition cursor-pointer hover:bg-indigo-950/40 col-span-2"
-                    >
-                      <Triangle className="w-4 h-4 text-teal-400" />
-                      <div className="text-left">
-                        <span className="block">Triangular</span>
-                        <span className="text-[9px] text-slate-400">3 Sillas</span>
-                      </div>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Mesas situadas */}
-                <div className="space-y-2 pt-2 border-t border-white/5">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                    Mesas Situadas ({mesas.length}):
-                  </span>
-                  {mesas.length === 0 ? (
-                    <p className="text-xs text-slate-500 italic">No hay mesas situadas.</p>
-                  ) : (
-                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                      {mesas.map((m) => {
-                        const sel = elementoSeleccionado?.tipo === 'mesa' && elementoSeleccionado.id === m.id;
-                        return (
-                          <div
-                            key={m.id}
-                            onClick={() => setElementoSeleccionado({ tipo: 'mesa', id: m.id })}
-                            className={`p-2.5 rounded-xl border flex justify-between items-center text-xs cursor-pointer transition ${
-                              sel
-                                ? 'bg-indigo-950/60 border-indigo-400 text-white'
-                                : 'bg-slate-900/60 border-white/5 text-slate-300 hover:border-indigo-500/30'
-                            }`}
-                          >
-                            <span className="font-bold">🍽️ {m.nombre} ({m.forma})</span>
-                            <span className="text-[10px] font-mono text-emerald-400">
-                              {m.precioSillaBase} {evento.moneda}/s
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* SECCIÓN 3: DIBUJAR ZONAS DE PIE O AFORO SIN NUMERACIÓN */}
-            {activeTabToolbox === 'zonas' && (
-              <div className="space-y-4 animate-fadeIn">
-                <div className="p-3.5 rounded-2xl bg-sky-950/30 border border-sky-500/20 text-xs text-sky-200">
-                  <span className="font-bold flex items-center gap-1.5 mb-1 text-sky-300">
-                    <Layers className="w-4 h-4 text-sky-400" /> Zonas de Pie / Sin Numeración
-                  </span>
-                  Dibuja directamente sobre el plano arrastrando con el ratón zonas amplias para admisión general, campo o pista.
-                </div>
-
-                <div className="space-y-2">
+            {/* Sub-herramientas según pestaña */}
+            {tabActiva === 'filas' && (
+              <div className="space-y-3">
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">
+                  Generadores de Asientos:
+                </span>
+                <div className="grid grid-cols-2 gap-2">
                   <button
-                    onClick={() => {
-                      setModoHerramienta(
-                        modoHerramienta === 'dibujar_zona' ? 'seleccionar' : 'dibujar_zona'
-                      );
-                    }}
-                    className={`w-full py-3 px-4 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer shadow-lg ${
-                      modoHerramienta === 'dibujar_zona'
-                        ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 animate-pulse'
-                        : 'bg-sky-600 hover:bg-sky-500 text-white'
-                    }`}
+                    onClick={() => agregarBloqueGradas('recta')}
+                    className="p-3 rounded-2xl bg-slate-900 border border-white/10 hover:border-indigo-500/50 text-left transition flex flex-col gap-1 cursor-pointer"
                   >
-                    <MousePointer className="w-4 h-4" />
-                    <span>
-                      {modoHerramienta === 'dibujar_zona'
-                        ? '✏️ Arrastra en el lienzo para crear la zona...'
-                        : '📐 Dibujar Zona con el Ratón en el Plano'}
-                    </span>
+                    <Grid className="w-4 h-4 text-indigo-400" />
+                    <span className="text-xs font-bold text-white">Fila Recta</span>
+                    <span className="text-[10px] text-slate-400">Alineación ortogonal</span>
                   </button>
+                  <button
+                    onClick={() => agregarBloqueGradas('curva')}
+                    className="p-3 rounded-2xl bg-slate-900 border border-white/10 hover:border-indigo-500/50 text-left transition flex flex-col gap-1 cursor-pointer"
+                  >
+                    <RotateCcw className="w-4 h-4 text-sky-400" />
+                    <span className="text-xs font-bold text-white">Grada Curva</span>
+                    <span className="text-[10px] text-slate-400">Arco radial en abanico</span>
+                  </button>
+                </div>
+              </div>
+            )}
 
+            {tabActiva === 'mesas' && (
+              <div className="space-y-3">
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">
+                  Mesas y Banquetes:
+                </span>
+                <div className="grid grid-cols-2 gap-2">
                   <button
                     onClick={() => {
-                      const id = `z-${Date.now().toString().slice(-4)}`;
-                      const z: ZonaDePie = {
+                      const id = `M${mesas.length + 1}`;
+                      setMesas([
+                        ...mesas,
+                        {
+                          id,
+                          nombre: `Mesa Redonda #${mesas.length + 1}`,
+                          forma: 'REDONDA',
+                          sillas: 6,
+                          precioSillaBase: 60.0,
+                          tamano: 26,
+                          x: 500,
+                          y: 350,
+                        },
+                      ]);
+                      setElementoSeleccionado({ tipo: 'mesa', id });
+                    }}
+                    className="p-3 rounded-2xl bg-slate-900 border border-white/10 hover:border-indigo-500/50 text-left transition flex items-center gap-2 cursor-pointer"
+                  >
+                    <Circle className="w-4 h-4 text-indigo-400" />
+                    <span className="text-xs font-bold text-white">Mesa Redonda (6p)</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      const id = `M${mesas.length + 1}`;
+                      setMesas([
+                        ...mesas,
+                        {
+                          id,
+                          nombre: `Mesa Cuadrada #${mesas.length + 1}`,
+                          forma: 'CUADRADA',
+                          sillas: 4,
+                          precioSillaBase: 50.0,
+                          tamano: 22,
+                          x: 500,
+                          y: 350,
+                        },
+                      ]);
+                      setElementoSeleccionado({ tipo: 'mesa', id });
+                    }}
+                    className="p-3 rounded-2xl bg-slate-900 border border-white/10 hover:border-indigo-500/50 text-left transition flex items-center gap-2 cursor-pointer"
+                  >
+                    <Square className="w-4 h-4 text-sky-400" />
+                    <span className="text-xs font-bold text-white">Mesa Cuadrada (4p)</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {tabActiva === 'palcos' && (
+              <div className="space-y-3">
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">
+                  Palcos VIP & Suites Privadas:
+                </span>
+                <button
+                  onClick={() => {
+                    const id = `P${palcos.length + 1}`;
+                    setPalcos([
+                      ...palcos,
+                      {
                         id,
-                        nombre: `Pista General #${zonasDePie.length + 1}`,
-                        color: '#06b6d4',
-                        precioBase: 40.0,
-                        aforoMaximo: 250,
-                        vendidas: 0,
-                        x: 180,
-                        y: 70,
-                        ancho: 520,
-                        alto: 50,
-                      };
-                      setZonasDePie([...zonasDePie, z]);
-                      setElementoSeleccionado({ tipo: 'zona', id });
-                    }}
-                    className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-white/5 border border-white/10 text-xs font-bold text-slate-300 flex items-center justify-center gap-2 transition cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5 text-sky-400" />
-                    <span>Añadir Zona Predeterminada Front Stage</span>
-                  </button>
-                </div>
-
-                {/* Zonas configuradas */}
-                <div className="space-y-2 pt-2 border-t border-white/5">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                    Zonas de Pie Definidas ({zonasDePie.length}):
-                  </span>
-                  {zonasDePie.length === 0 ? (
-                    <p className="text-xs text-slate-500 italic">No hay zonas de pie dibujadas.</p>
-                  ) : (
-                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                      {zonasDePie.map((z) => {
-                        const sel = elementoSeleccionado?.tipo === 'zona' && elementoSeleccionado.id === z.id;
-                        return (
-                          <div
-                            key={z.id}
-                            onClick={() => setElementoSeleccionado({ tipo: 'zona', id: z.id })}
-                            className={`p-2.5 rounded-xl border flex justify-between items-center text-xs cursor-pointer transition ${
-                              sel
-                                ? 'bg-sky-950/60 border-sky-400 text-white'
-                                : 'bg-slate-900/60 border-white/5 text-slate-300 hover:border-sky-500/30'
-                            }`}
-                          >
-                            <span className="font-bold">{z.nombre}</span>
-                            <span className="text-[10px] font-mono text-emerald-400">
-                              {z.aforoMaximo} pax • {z.precioBase} {evento.moneda}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
+                        nombre: `Palco VIP #${palcos.length + 1}`,
+                        capacidad: 8,
+                        sillasAdicionales: 0,
+                        precioPalcoBase: 480.0,
+                        modoVenta: 'INDIVIDUAL',
+                        precioSillaIndividual: 60.0,
+                        x: 200,
+                        y: 450,
+                        ancho: 260,
+                        alto: 120,
+                      },
+                    ]);
+                    setElementoSeleccionado({ tipo: 'palco', id });
+                  }}
+                  className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
+                >
+                  <Crown className="w-4 h-4 text-amber-300" />
+                  <span>Añadir Palco VIP (8 Plazas)</span>
+                </button>
               </div>
             )}
 
-            {/* SECCIÓN 4: GESTIÓN DEL PLANO DE FONDO ARQUITECTÓNICO */}
-            {activeTabToolbox === 'fondo' && (
-              <div className="space-y-4 animate-fadeIn">
-                <div className="p-3.5 rounded-2xl bg-emerald-950/30 border border-emerald-500/20 text-xs text-emerald-200">
-                  <span className="font-bold flex items-center gap-1.5 mb-1 text-emerald-300">
-                    <ImageIcon className="w-4 h-4 text-emerald-400" /> Carga del Plano de Fondo
-                  </span>
-                  Carga una imagen real del plano del recinto desde tu ordenador o mediante URL. Servirá como background sobre el cual se sitúan todos los elementos.
+            {tabActiva === 'fondo' && (
+              <div className="space-y-3">
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">
+                  Plano Arquitectónico de Fondo:
+                </span>
+                <input
+                  type="url"
+                  placeholder="URL de la imagen del plano (JPG, PNG, SVG)..."
+                  value={imagenFondo}
+                  onChange={(e) => setImagenFondo(e.target.value)}
+                  className="w-full bg-slate-900 border border-white/10 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                />
+                <div className="flex justify-between items-center text-xs text-slate-400">
+                  <span>Opacidad del Plano:</span>
+                  <span className="font-mono text-white">{Math.round(imagenFondoOpacidad * 100)}%</span>
                 </div>
-
-                {/* Input archivo local */}
-                <div>
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={handleCargarArchivoLocal}
-                    accept="image/*"
-                    className="hidden"
-                  />
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="w-full py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer shadow-lg shadow-emerald-500/20"
-                  >
-                    <Upload className="w-4 h-4" />
-                    <span>Cargar Imagen desde mi Ordenador</span>
-                  </button>
-                </div>
-
-                {/* Input URL */}
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                    O escribe la URL del plano:
-                  </label>
-                  <input
-                    type="url"
-                    value={imagenFondo}
-                    onChange={(e) => setImagenFondo(e.target.value)}
-                    placeholder="https://ejemplo.com/plano-estadio.jpg"
-                    className="w-full bg-slate-900 border border-white/10 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                {/* Control de Opacidad del fondo */}
-                <div className="space-y-1.5 pt-2 border-t border-white/5">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-400 font-bold">Opacidad del Fondo:</span>
-                    <span className="font-mono text-emerald-400 font-bold">
-                      {Math.round(imagenFondoOpacidad * 100)}%
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0.05"
-                    max="1"
-                    step="0.05"
-                    value={imagenFondoOpacidad}
-                    onChange={(e) => setImagenFondoOpacidad(parseFloat(e.target.value))}
-                    className="w-full accent-emerald-500 cursor-pointer"
-                  />
-                </div>
-
-                {/* Plantillas predefinidas para pruebas */}
-                <div className="space-y-2 pt-2 border-t border-white/5">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                    O elige un Plano Predefinido:
-                  </span>
-                  <div className="space-y-1.5">
-                    {FONDOS_PREDEFINIDOS.map((fp, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => setImagenFondo(fp.url)}
-                        className="w-full p-2 rounded-xl bg-slate-900/60 hover:bg-white/5 border border-white/5 text-left text-xs transition cursor-pointer flex items-center justify-between"
-                      >
-                        <span className="font-bold text-white">{fp.nombre}</span>
-                        <span className="text-[10px] text-emerald-400">Usar</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {imagenFondo && (
-                  <button
-                    onClick={() => setImagenFondo('')}
-                    className="w-full py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 text-xs font-bold transition cursor-pointer"
-                  >
-                    Quitar Imagen de Fondo
-                  </button>
-                )}
+                <input
+                  type="range"
+                  min="0.05"
+                  max="1"
+                  step="0.05"
+                  value={imagenFondoOpacidad}
+                  onChange={(e) => setImagenFondoOpacidad(parseFloat(e.target.value))}
+                  className="w-full accent-indigo-500 cursor-pointer"
+                />
               </div>
             )}
           </div>
 
-          {/* INSPECTOR DE PROPIEDADES DEL ELEMENTO SELECCIONADO */}
-          {elementoSeleccionado ? (
-            <div className="glass-panel rounded-3xl p-5 border border-amber-500/30 space-y-4 bg-slate-950/80 animate-in slide-in-from-top-4 shadow-2xl">
-              <div className="flex justify-between items-center pb-2 border-b border-white/10">
-                <div className="flex items-center gap-2">
-                  <Settings2 className="w-4 h-4 text-amber-400" />
-                  <span className="text-xs font-black text-white uppercase tracking-wider">
-                    Inspector: {elementoSeleccionado.tipo.toUpperCase()}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={duplicarElementoSeleccionado}
-                    className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 transition"
-                    title="Duplicar elemento"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={eliminarElementoSeleccionado}
-                    className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition"
-                    title="Eliminar elemento"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+          {/* Inspector de Propiedades */}
+          {elementoSeleccionado && (
+            <div className="glass-panel rounded-3xl p-4 border border-indigo-500/30 space-y-4">
+              <div className="flex justify-between items-center border-b border-white/10 pb-2">
+                <span className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                  <Settings2 className="w-4 h-4 text-indigo-400" /> Inspector: {elementoSeleccionado.tipo}
+                </span>
+                <button
+                  onClick={() => {
+                    if (elementoSeleccionado.tipo === 'fila') {
+                      setFilas(filas.filter((f) => f.id !== elementoSeleccionado.id));
+                    } else if (elementoSeleccionado.tipo === 'mesa') {
+                      setMesas(mesas.filter((m) => m.id !== elementoSeleccionado.id));
+                    } else if (elementoSeleccionado.tipo === 'palco') {
+                      setPalcos(palcos.filter((p) => p.id !== elementoSeleccionado.id));
+                    } else if (elementoSeleccionado.tipo === 'zona') {
+                      setZonasDePie(zonasDePie.filter((z) => z.id !== elementoSeleccionado.id));
+                    }
+                    setElementoSeleccionado(null);
+                  }}
+                  className="p-1 rounded-lg text-rose-400 hover:bg-rose-500/10 transition"
+                  title="Eliminar elemento"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>
 
-              {/* INSPECTOR DE PALCO VIP */}
-              {elementoSeleccionado.tipo === 'palco' && palcoActivo && (
-                <div className="space-y-3.5 text-xs">
+              {/* Inspector de Filas */}
+              {filaActiva && (
+                <div className="space-y-3 text-xs">
                   <div>
-                    <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
-                      Nombre del Palco:
-                    </label>
+                    <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Nombre Fila:</label>
                     <input
                       type="text"
-                      value={palcoActivo.nombre}
+                      value={filaActiva.nombre}
                       onChange={(e) =>
-                        setPalcos(
-                          palcos.map((p) => (p.id === palcoActivo.id ? { ...p, nombre: e.target.value } : p))
-                        )
+                        setFilas(filas.map((f) => (f.id === filaActiva.id ? { ...f, nombre: e.target.value } : f)))
                       }
                       className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold"
                     />
                   </div>
-
-                  {/* ADICIÓN DIRECTA DE SILLAS (CLAVE REQUERIDA) */}
-                  <div className="p-3 rounded-2xl bg-purple-950/40 border border-purple-500/30 space-y-2">
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-purple-200">Total Sillas del Palco:</span>
-                      <span className="font-mono text-amber-300 font-black text-sm">
-                        {palcoActivo.capacidad + (palcoActivo.sillasAdicionales || 0)} sillas
-                      </span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Butacas:</label>
+                      <input
+                        type="number"
+                        min="2"
+                        max="40"
+                        value={filaActiva.asientos}
+                        onChange={(e) =>
+                          setFilas(
+                            filas.map((f) =>
+                              f.id === filaActiva.id ? { ...f, asientos: parseInt(e.target.value) || 2 } : f
+                            )
+                          )
+                        }
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
+                      />
                     </div>
-
-                    <div className="flex items-center gap-2 pt-1">
-                      <button
-                        onClick={() => adicionarSillaPalco(palcoActivo.id, 1)}
-                        className="flex-1 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 font-bold text-[11px] text-white flex items-center justify-center gap-1 transition cursor-pointer"
-                      >
-                        <Plus className="w-3 h-3" /> +1 Adicionar Silla
-                      </button>
-                      <button
-                        onClick={() => adicionarSillaPalco(palcoActivo.id, -1)}
-                        disabled={(palcoActivo.sillasAdicionales || 0) <= 0}
-                        className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 font-bold text-[11px] text-slate-300 transition cursor-pointer disabled:opacity-40"
-                      >
-                        - Quitar Silla
-                      </button>
+                    <div>
+                      <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
+                        Precio ({evento.moneda}):
+                      </label>
+                      <input
+                        type="number"
+                        value={filaActiva.precioBase}
+                        onChange={(e) =>
+                          setFilas(
+                            filas.map((f) =>
+                              f.id === filaActiva.id ? { ...f, precioBase: parseFloat(e.target.value) || 0 } : f
+                            )
+                          )
+                        }
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
+                      />
                     </div>
                   </div>
-
-                  {/* MODALIDAD DE VENTA (COMPLETO / INDIVIDUAL / PAREJAS) */}
                   <div>
-                    <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
-                      Modalidad de Venta del Palco:
+                    <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
+                      Radio de Curvatura (Arco):
                     </label>
-                    <select
-                      value={palcoActivo.modoVenta || 'INDIVIDUAL'}
+                    <input
+                      type="range"
+                      min="0"
+                      max="800"
+                      step="20"
+                      value={filaActiva.curvatura || 0}
                       onChange={(e) =>
-                        setPalcos(
-                          palcos.map((p) =>
-                            p.id === palcoActivo.id
-                              ? { ...p, modoVenta: e.target.value as ModoVentaPalco }
-                              : p
+                        setFilas(
+                          filas.map((f) =>
+                            f.id === filaActiva.id ? { ...f, curvatura: parseInt(e.target.value) || 0 } : f
                           )
                         )
                       }
-                      className="w-full bg-slate-900 border border-purple-500/30 rounded-xl p-2 text-white font-bold"
-                    >
-                      <option value="COMPLETO">Venta Completa (Palco Entero 1 solo Ticket)</option>
-                      <option value="INDIVIDUAL">Venta Individual (Por Silla Clic Directo)</option>
-                      <option value="PAREJAS">Venta en Parejas (De 2 en 2 Sillas)</option>
-                    </select>
+                      className="w-full accent-sky-400 cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-400 mt-1 font-mono">
+                      <span>0 (Recta)</span>
+                      <span>{filaActiva.curvatura || 0}px (Curvatura)</span>
+                    </div>
                   </div>
+                </div>
+              )}
 
+              {/* Inspector de Palcos */}
+              {palcoActivo && (
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Nombre Palco:</label>
+                    <input
+                      type="text"
+                      value={palcoActivo.nombre}
+                      onChange={(e) =>
+                        setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, nombre: e.target.value } : p)))
+                      }
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold"
+                    />
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
-                        Precio Total ({evento.moneda}):
+                      <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Modalidad:</label>
+                      <select
+                        value={palcoActivo.modoVenta || 'INDIVIDUAL'}
+                        onChange={(e) =>
+                          setPalcos(
+                            palcos.map((p) =>
+                              p.id === palcoActivo.id
+                                ? { ...p, modoVenta: e.target.value as ModoVentaPalco }
+                                : p
+                            )
+                          )
+                        }
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold"
+                      >
+                        <option value="INDIVIDUAL">Por Butaca</option>
+                        <option value="COMPLETO">Palco Entero</option>
+                        <option value="PAREJAS">En Parejas</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
+                        Precio ({evento.moneda}):
                       </label>
                       <input
                         type="number"
@@ -1537,308 +1108,35 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
                         className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
                       />
                     </div>
-
-                    <div>
-                      <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
-                        Precio/Silla ({evento.moneda}):
-                      </label>
-                      <input
-                        type="number"
-                        value={palcoActivo.precioSillaIndividual || ''}
-                        placeholder="Calculado"
-                        onChange={(e) =>
-                          setPalcos(
-                            palcos.map((p) =>
-                              p.id === palcoActivo.id
-                                ? { ...p, precioSillaIndividual: parseFloat(e.target.value) || 0 }
-                                : p
-                            )
-                          )
-                        }
-                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
-                      />
-                    </div>
                   </div>
                 </div>
               )}
-
-              {/* INSPECTOR DE MESA GEOMÉTRICA */}
-              {elementoSeleccionado.tipo === 'mesa' && mesaActiva && (
-                <div className="space-y-3.5 text-xs">
-                  <div>
-                    <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
-                      Nombre de la Mesa:
-                    </label>
-                    <input
-                      type="text"
-                      value={mesaActiva.nombre}
-                      onChange={(e) =>
-                        setMesas(
-                          mesas.map((m) => (m.id === mesaActiva.id ? { ...m, nombre: e.target.value } : m))
-                        )
-                      }
-                      className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
-                        Forma Geométrica:
-                      </label>
-                      <select
-                        value={mesaActiva.forma}
-                        onChange={(e) =>
-                          setMesas(
-                            mesas.map((m) =>
-                              m.id === mesaActiva.id
-                                ? { ...m, forma: e.target.value as FormaMesa }
-                                : m
-                            )
-                          )
-                        }
-                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold"
-                      >
-                        <option value="REDONDA">Redonda</option>
-                        <option value="CUADRADA">Cuadrada</option>
-                        <option value="HEXAGONAL">Hexagonal</option>
-                        <option value="OCTOGONAL">Octogonal</option>
-                        <option value="TRIANGULAR">Triangular</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
-                        Disposición Sillas:
-                      </label>
-                      <select
-                        value={mesaActiva.disposicionSillas || 'ALREDEDOR'}
-                        onChange={(e) =>
-                          setMesas(
-                            mesas.map((m) =>
-                              m.id === mesaActiva.id
-                                ? {
-                                    ...m,
-                                    disposicionSillas: e.target.value as 'ALREDEDOR' | 'FRONTAL',
-                                  }
-                                : m
-                            )
-                          )
-                        }
-                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold"
-                      >
-                        <option value="ALREDEDOR">Alrededor (360°)</option>
-                        <option value="FRONTAL">Debajo / Frontal</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
-                        Cantidad de Sillas:
-                      </label>
-                      <input
-                        type="number"
-                        min="2"
-                        max="16"
-                        value={mesaActiva.sillas}
-                        onChange={(e) =>
-                          setMesas(
-                            mesas.map((m) =>
-                              m.id === mesaActiva.id
-                                ? { ...m, sillas: parseInt(e.target.value) || 2 }
-                                : m
-                            )
-                          )
-                        }
-                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
-                        Precio/Silla ({evento.moneda}):
-                      </label>
-                      <input
-                        type="number"
-                        value={mesaActiva.precioSillaBase}
-                        onChange={(e) =>
-                          setMesas(
-                            mesas.map((m) =>
-                              m.id === mesaActiva.id
-                                ? { ...m, precioSillaBase: parseFloat(e.target.value) || 0 }
-                                : m
-                            )
-                          )
-                        }
-                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* INSPECTOR DE ZONA DE PIE */}
-              {elementoSeleccionado.tipo === 'zona' && zonaActiva && (
-                <div className="space-y-3.5 text-xs">
-                  <div>
-                    <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
-                      Nombre de la Zona:
-                    </label>
-                    <input
-                      type="text"
-                      value={zonaActiva.nombre}
-                      onChange={(e) =>
-                        setZonasDePie(
-                          zonasDePie.map((z) => (z.id === zonaActiva.id ? { ...z, nombre: e.target.value } : z))
-                        )
-                      }
-                      className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
-                        Aforo Máximo (Pax):
-                      </label>
-                      <input
-                        type="number"
-                        value={zonaActiva.aforoMaximo}
-                        onChange={(e) =>
-                          setZonasDePie(
-                            zonasDePie.map((z) =>
-                              z.id === zonaActiva.id
-                                ? { ...z, aforoMaximo: parseInt(e.target.value) || 0 }
-                                : z
-                            )
-                          )
-                        }
-                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
-                        Precio Ticket ({evento.moneda}):
-                      </label>
-                      <input
-                        type="number"
-                        value={zonaActiva.precioBase}
-                        onChange={(e) =>
-                          setZonasDePie(
-                            zonasDePie.map((z) =>
-                              z.id === zonaActiva.id
-                                ? { ...z, precioBase: parseFloat(e.target.value) || 0 }
-                                : z
-                            )
-                          )
-                        }
-                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
-                      Color Identificador:
-                    </label>
-                    <input
-                      type="color"
-                      value={zonaActiva.color}
-                      onChange={(e) =>
-                        setZonasDePie(
-                          zonasDePie.map((z) => (z.id === zonaActiva.id ? { ...z, color: e.target.value } : z))
-                        )
-                      }
-                      className="w-full h-8 bg-slate-900 border border-white/10 rounded-xl p-1 cursor-pointer"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="p-4 rounded-3xl border border-white/5 bg-slate-950/40 text-center text-slate-500 text-xs flex flex-col items-center gap-2">
-              <Move className="w-5 h-5 text-slate-600" />
-              <span>Haz clic en cualquier palco, mesa o zona en el lienzo para inspeccionar y editar sus cotas.</span>
             </div>
           )}
         </div>
 
-        {/* COLUMNA DERECHA: LIENZO CANVAS 2D DE DISEÑO Y DISPOSICIÓN VISUAL (8 COLUMNAS) */}
-        <div className="lg:col-span-8 space-y-3">
-          <div className="glass-panel rounded-3xl p-4 border border-white/10 bg-slate-950/80 shadow-2xl relative flex flex-col items-center">
-            {/* Barra de estado del Lienzo */}
-            <div className="w-full flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-white/10 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
-                <span className="font-bold text-white">Lienzo Arquitectónico 2D</span>
-                <span className="text-[10px] text-slate-400">
-                  {modoHerramienta === 'dibujar_zona'
-                    ? 'Modo: Dibujar Zona con Clic y Arrastre'
-                    : 'Modo: Seleccionar y Arrastrar con Cursor'}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setModoHerramienta('seleccionar')}
-                  className={`px-3 py-1.5 rounded-xl font-bold text-xs transition flex items-center gap-1 ${
-                    modoHerramienta === 'seleccionar'
-                      ? 'bg-indigo-600 text-white'
-                      : 'text-slate-400 hover:text-white bg-white/5'
-                  }`}
-                  title="Cursor para mover y situar"
-                >
-                  <Move className="w-3.5 h-3.5" /> Mover
-                </button>
-
-                <button
-                  onClick={() => setModoHerramienta('dibujar_zona')}
-                  className={`px-3 py-1.5 rounded-xl font-bold text-xs transition flex items-center gap-1 ${
-                    modoHerramienta === 'dibujar_zona'
-                      ? 'bg-amber-500 text-slate-950 font-black'
-                      : 'text-slate-400 hover:text-white bg-white/5'
-                  }`}
-                  title="Herramienta de dibujo de zonas de pie"
-                >
-                  <MousePointer className="w-3.5 h-3.5" /> Dibujar Zona
-                </button>
-              </div>
-            </div>
-
-            {/* Visual Canvas Element */}
-            <div className="w-full overflow-x-auto flex justify-center py-2">
-              <canvas
-                ref={canvasRef}
-                width={920}
-                height={620}
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-                className={`rounded-2xl border border-white/10 shadow-2xl transition max-w-full h-auto select-none ${
-                  modoHerramienta === 'dibujar_zona' ? 'cursor-crosshair' : isDragging ? 'cursor-grabbing' : 'cursor-grab'
-                }`}
-              />
-            </div>
-
-            {/* Leyenda y atajos de teclado */}
-            <div className="w-full pt-3 border-t border-white/5 flex flex-wrap justify-between items-center text-[11px] text-slate-400 gap-2">
-              <div className="flex items-center gap-3">
-                <span className="flex items-center gap-1">
-                  <span className="w-2.5 h-2.5 rounded-sm bg-purple-500"></span> Palcos VIP (+ Sillas)
-                </span>
-                <span className="flex items-center gap-1">
-                  <span className="w-2.5 h-2.5 rounded-full bg-indigo-500"></span> Mesas Geométricas
-                </span>
-                <span className="flex items-center gap-1">
-                  <span className="w-2.5 h-2.5 rounded-sm bg-sky-500"></span> Zonas de Pie
-                </span>
-              </div>
-              <span className="text-[10px] text-slate-500">
-                Arrastra libremente cualquier elemento para reubicarlo sobre el plano de fondo
-              </span>
+        {/* Columna Derecha: Lienzo 2D Interactivo */}
+        <div className="lg:col-span-8">
+          <div className="glass-panel p-3 rounded-3xl border border-white/10 bg-slate-950 flex flex-col items-center overflow-hidden">
+            <canvas
+              ref={canvasRef}
+              width={1000}
+              height={700}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onWheel={handleWheel}
+              className={`rounded-2xl max-w-full h-auto border border-white/5 select-none ${
+                herramienta === 'pan'
+                  ? 'cursor-grab active:cursor-grabbing'
+                  : herramienta === 'dibujar_zona'
+                  ? 'cursor-crosshair'
+                  : 'cursor-default'
+              }`}
+            />
+            <div className="w-full flex justify-between items-center text-[11px] text-slate-500 pt-3 px-2">
+              <span>Rueda del ratón: Zoom in/out | Botón central / Herramienta mano: Desplazar</span>
+              <span className="font-mono text-slate-400">Resolución: 1000x700px</span>
             </div>
           </div>
         </div>
