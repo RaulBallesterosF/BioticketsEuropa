@@ -8,42 +8,131 @@ import {
   ReporteLiquidacion,
   ReportePyG,
   ValidacionResultado,
+  DesgloseFinanciero,
 } from '../types';
 
-export const login = async (credentials: { email: string }): Promise<{ ok: boolean; usuario: Usuario; token: string }> => {
+// Autenticación y Sesión Local
+export const login = async (credentials: { email: string; password?: string }): Promise<{
+  ok: boolean;
+  usuario: Usuario;
+  token: string;
+}> => {
   const { email } = credentials;
+  let rol: Usuario['rol'] = 'SUPER_ADMIN';
+  let nombre = 'Super Administrador (Biotickets)';
+  let promotorId = 1;
+
+  if (email.includes('promotor') || email.includes('livenation')) {
+    rol = 'PROMOTOR';
+    nombre = 'Carlos Mendoza (Live Nation)';
+    promotorId = 1;
+  } else if (email.includes('validador') || email.includes('puerta') || email.includes('staff')) {
+    rol = 'VALIDADOR';
+    nombre = 'Operador de Puerta / Staff';
+  } else if (email.includes('fan') || email.includes('cliente')) {
+    rol = 'FAN';
+    nombre = 'Comprador Fan';
+  }
+
   const usuario: Usuario = {
     id: 1,
-    nombre: 'Administrador Biotickets',
+    nombre,
     email,
-    rol: 'SUPER_ADMIN',
-    promotorId: 1,
+    rol,
+    promotorId,
   };
-  const token = `jwt-biotickets-${Date.now()}`;
-  localStorage.setItem('biotickets_user', JSON.stringify(usuario));
+  const token = `jwt-biotickets-pro-${Date.now()}`;
+  localStorage.setItem('eurotickets_token', token);
+  localStorage.setItem('eurotickets_user', JSON.stringify(usuario));
   return { ok: true, usuario, token };
 };
 
 export const logout = () => {
-  localStorage.removeItem('biotickets_user');
+  localStorage.removeItem('eurotickets_token');
+  localStorage.removeItem('eurotickets_user');
 };
 
 export const obtenerUsuarioActual = (): Usuario | null => {
   try {
-    const raw = localStorage.getItem('biotickets_user');
+    const raw = localStorage.getItem('eurotickets_user');
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
   }
 };
 
-export const obtenerEmpresarios = async (): Promise<Promotor[]> => globalStore.getPromotores();
-export const obtenerEventos = async (): Promise<Evento[]> => globalStore.getEventos();
-export const obtenerMapaAsientos = async (eventoId: number) => globalStore.getMapa(eventoId);
-export const guardarConfiguracionMapa = async (eventoId: number, config: Partial<MapaRecinto>) => globalStore.saveMapa(eventoId, config);
-export const bloquearAsientos = async (asientoIds: string[], userId?: string) => globalStore.bloquearAsientos(asientoIds, userId);
-export const liberarAsientos = async (asientoIds: string[]) => globalStore.liberarAsientos(asientoIds);
-export const obtenerMisTickets = async (): Promise<Ticket[]> => globalStore.getTickets();
-export const validarTicketEnPuerta = async (codigoQR: string): Promise<ValidacionResultado> => globalStore.validarTicket(codigoQR);
-export const obtenerReporteLiquidacion = async (eventoId: number): Promise<ReporteLiquidacion> => globalStore.getLiquidacionD3(eventoId);
-export const obtenerReportePyG = async (eventoId: number): Promise<ReportePyG> => globalStore.getReportePyG(eventoId);
+// --- Promotores ---
+export const obtenerEmpresarios = async (): Promise<Promotor[]> => {
+  return globalStore.getPromotores();
+};
+
+export const crearEmpresario = async (datos: Omit<Promotor, 'id'>): Promise<Promotor> => {
+  return globalStore.addPromotor(datos);
+};
+
+// --- Eventos ---
+export const obtenerEventos = async (): Promise<Evento[]> => {
+  return globalStore.getEventos();
+};
+
+export const crearEvento = async (datos: Omit<Evento, 'id'>): Promise<Evento> => {
+  return globalStore.addEvento(datos);
+};
+
+export const eliminarEvento = async (id: number): Promise<boolean> => {
+  return globalStore.deleteEvento(id);
+};
+
+// --- Mapas y Asientos ---
+export const obtenerMapaAsientos = async (eventoId: number) => {
+  return globalStore.getMapa(eventoId);
+};
+
+export const guardarConfiguracionMapa = async (
+  eventoId: number,
+  configuracion: Partial<MapaRecinto>
+): Promise<MapaRecinto> => {
+  return globalStore.saveMapa(eventoId, configuracion);
+};
+
+// --- Bloqueo Anti-Doble Venta (SeatLock) ---
+export const bloquearAsientos = async (asientoIds: string[], userId?: string) => {
+  const res = globalStore.bloquearAsientos(asientoIds, userId || 'session_user');
+  if (!res.ok) {
+    throw new Error(res.mensaje || 'Asientos no disponibles');
+  }
+  return res;
+};
+
+export const liberarAsientos = async (asientoIds: string[]) => {
+  return globalStore.liberarAsientos(asientoIds);
+};
+
+// --- Compra Multi-Asiento Stripe ---
+export const comprarTickets = async (datos: {
+  eventoId: number;
+  asientos: { id: string; numero: string; precioBase: number }[];
+  compradorEmail: string;
+  telefono?: string;
+  stripePaymentToken?: string;
+}): Promise<{ ok: boolean; tickets: Ticket[]; desgloseTotal: DesgloseFinanciero; stripePaymentId: string }> => {
+  return globalStore.procesarCompra(datos);
+};
+
+// --- Mis Tickets y Validaciones ---
+export const obtenerMisTickets = async (): Promise<Ticket[]> => {
+  return globalStore.getTickets();
+};
+
+export const validarTicketEnPuerta = async (codigoQR: string): Promise<ValidacionResultado> => {
+  return globalStore.validarTicket(codigoQR);
+};
+
+// --- Reportes Financieros ---
+export const obtenerReporteLiquidacion = async (eventoId: number): Promise<ReporteLiquidacion> => {
+  return globalStore.getLiquidacionD3(eventoId);
+};
+
+export const obtenerReportePyG = async (eventoId: number): Promise<ReportePyG> => {
+  return globalStore.getReportePyG(eventoId);
+};
