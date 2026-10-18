@@ -14,33 +14,31 @@ app.use(express.json());
 const distFolder = path.resolve(__dirname, 'dist');
 const indexFile = path.resolve(distFolder, 'index.html');
 
-// Servir la carpeta estática del build
+// 1. Servir la carpeta estática dist
 app.use(express.static(distFolder, { index: false }));
 
-// Endpoint especial para FORZAR EL REINICIO del proceso colgado
+// 2. Endpoint para FORZAR la matanza del proceso bloqueado en GoDaddy
 app.get('/api/kill-server', (req, res) => {
-  res.json({ message: 'Matando proceso antiguo para forzar reinicio...' });
-  setTimeout(() => {
-    process.exit(1); // Esto obliga al orquestador de GoDaddy a levantar la versión nueva
-  }, 500);
+  res.json({ status: 'killing process...' });
+  setTimeout(() => { process.exit(1); }, 100);
 });
 
-// Healthcheck con validación de versión v5
+// 3. Healthcheck de verificación
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
-    engine: 'BioticketsEuropa-v5-Active',
+    version: 'FORCE-RELOAD-V6',
     distExists: fs.existsSync(distFolder), 
     indexExists: fs.existsSync(indexFile) 
   });
 });
 
-// Fallback universal para React
+// 4. SPA Fallback directo
 app.use('*', (req, res) => {
   if (fs.existsSync(indexFile)) {
     res.sendFile(indexFile);
   } else {
-    res.status(200).send('Servidor activo pero la carpeta dist/ aún no se ha compilado.');
+    res.status(500).send('Servidor activo. La carpeta dist/ no existe todavia.');
   }
 });
 
