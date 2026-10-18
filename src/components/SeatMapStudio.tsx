@@ -43,7 +43,6 @@ import {
   Check,
   X,
   AlertCircle,
-  HelpCircle,
 } from 'lucide-react';
 
 interface SeatMapStudioProps {
@@ -93,10 +92,10 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
   onActualizarEvento,
   onCambiarTab,
 }) => {
-  // Modo de visualización: 'editor' (edición con controles) o 'preview' (previsualizador fan estilo Elementor)
+  // Modo de visualización: 'editor' (herramientas) o 'preview' (vista previa del comprador)
   const [modoVista, setModoVista] = useState<'editor' | 'preview'>('editor');
 
-  // Metadatos y Fondo del Plano
+  // Metadatos y dimensiones de la imagen de fondo
   const [nombreMapa, setNombreMapa] = useState<string>(`Plano Oficial - ${evento.lugar}`);
   const [imagenFondo, setImagenFondo] = useState(mapaActual.imagenFondo || '');
   const [bgPos, setBgPos] = useState({ x: 0, y: 0 });
@@ -105,35 +104,35 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     mapaActual.imagenFondoOpacidad !== undefined ? mapaActual.imagenFondoOpacidad : 0.75
   );
 
-  // Elementos del recinto
+  // Elementos del mapa
   const [palcos, setPalcos] = useState<PalcoStudio[]>((mapaActual.palcos || []) as PalcoStudio[]);
   const [mesas, setMesas] = useState<MesaStudio[]>((mapaActual.mesas || []) as MesaStudio[]);
   const [zonasDePie, setZonasDePie] = useState<ZonaStudio[]>((mapaActual.zonasDePie || []) as ZonaStudio[]);
   const [filas, setFilas] = useState<FilaAsientos[]>(mapaActual.filas || []);
 
-  // Elemento seleccionado e inspector
+  // Elemento seleccionado en el lienzo
   const [elementoSel, setElementoSel] = useState<{ tipo: 'palco' | 'mesa' | 'zona'; id: string } | null>(null);
 
-  // Simulación de selección en modo preview fan
+  // Selección en la previsualización fan
   const [previewSeleccionados, setPreviewSeleccionados] = useState<string[]>([]);
 
-  // Navegación en el Lienzo: Zoom y Pan
+  // Navegación Canvas: Zoom y Panning
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [herramienta, setHerramienta] = useState<'seleccionar' | 'pan' | 'dibujar_palco' | 'dibujar_zona' | 'dibujar_mesa'>('seleccionar');
 
-  // Pestaña lateral activa
-  const [tabSidebar, setTabSidebar] = useState<'elementos' | 'fondo' | 'csv' | 'tarifas'>('elementos');
+  // Pestañas del panel izquierdo
+  const [tabSidebar, setTabSidebar] = useState<'elementos' | 'fondo' | 'tarifas'>('elementos');
 
   // Estados de retroalimentación
   const [guardando, setGuardando] = useState(false);
   const [guardadoExito, setGuardadoExito] = useState(false);
   const [mensajeNotif, setMensajeNotif] = useState<string | null>(null);
 
-  // Modal para carga masiva CSV
+  // Modal para carga de archivo plano CSV/TXT
   const [modalCsvAbierto, setModalCsvAbierto] = useState(false);
 
-  // Referencias para el dibujo en Canvas y redimensionamiento por puntos
+  // Referencias para Canvas y sincronización 1:1 de puntero
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imgFondoRef = useRef<HTMLImageElement | null>(null);
   const isDraggingRef = useRef(false);
@@ -148,7 +147,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     setTimeout(() => setMensajeNotif(null), 4000);
   };
 
-  // 1. INICIAR LIENZO EN BLANCO
+  // 1. INICIAR LIENZO EN BLANCO TOTAL (SOLO CUADRÍCULA)
   const handleNuevoMapaEnBlanco = () => {
     if (window.confirm('¿Deseas iniciar un lienzo completamente en blanco? Se limpiarán todos los elementos actuales.')) {
       setPalcos([]);
@@ -165,7 +164,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     }
   };
 
-  // Carga y sincronización de imagen de fondo
+  // Carga de imagen de fondo
   useEffect(() => {
     if (!imagenFondo) {
       imgFondoRef.current = null;
@@ -176,21 +175,28 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     img.src = imagenFondo;
     img.onload = () => {
       imgFondoRef.current = img;
-      // Ajuste automático inicial si es nueva
-      if (bgSize.w === 1600 && img.naturalWidth > 0) {
-        setBgSize({ w: img.naturalWidth, h: img.naturalHeight });
-      }
       renderizar();
     };
   }, [imagenFondo]);
 
-  const toVirtualCoords = (clientX: number, clientY: number) => {
+  // CORRECCIÓN MATEMÁTICA DE SINCRONIZACIÓN DE RATÓN 1:1
+  const getCanvasMousePos = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
     return {
-      x: (clientX - rect.left - pan.x) / zoom,
-      y: (clientY - rect.top - pan.y) / zoom,
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY,
+    };
+  };
+
+  const toVirtualCoords = (clientX: number, clientY: number) => {
+    const { x, y } = getCanvasMousePos(clientX, clientY);
+    return {
+      x: (x - pan.x) / zoom,
+      y: (y - pan.y) / zoom,
     };
   };
 
@@ -208,7 +214,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     };
   };
 
-  // Renderizado del Canvas 2D
+  // Renderizado del Canvas
   const renderizar = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -221,7 +227,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     ctx.save();
     ctx.clearRect(0, 0, canvasW, canvasH);
 
-    // Fondo del área de trabajo
+    // Fondo del espacio de trabajo
     ctx.fillStyle = '#060913';
     ctx.fillRect(0, 0, canvasW, canvasH);
 
@@ -251,7 +257,6 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       ctx.drawImage(imgFondoRef.current, bgPos.x, bgPos.y, bgSize.w, bgSize.h);
       ctx.restore();
 
-      // Marco de calibración de imagen si está en modo editor y pestaña 'fondo'
       if (modoVista === 'editor' && tabSidebar === 'fondo') {
         ctx.strokeStyle = 'rgba(99, 102, 241, 0.6)';
         ctx.lineWidth = 2 / zoom;
@@ -289,20 +294,19 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       ctx.fill();
       ctx.stroke();
 
+      // En el mapa: solo el número identificador
       ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 11px system-ui, sans-serif';
+      ctx.font = 'bold 16px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      const precioZ = z.tarifas?.etapa3Full || z.precioBase;
-      ctx.fillText(`${z.nombre} (${z.aforoMaximo} pax) - ${precioZ} ${evento.moneda}`, z.x + z.ancho / 2, z.y + z.alto / 2 + 4);
+      ctx.fillText(z.nombre.replace(/\D/g, '') || 'Z', z.x + z.ancho / 2, z.y + z.alto / 2 + 6);
       ctx.restore();
 
-      // Dibujar caja de anclas y puntos de control si está seleccionado en modo editor
       if (modoVista === 'editor' && esSel) {
         dibujarHandles(ctx, z.x, z.y, z.ancho, z.alto);
       }
     });
 
-    // 4. Renderizar Palcos VIP
+    // 4. Renderizar Palcos VIP (SOLO EL NÚMERO CENTRADO)
     palcos.forEach((p) => {
       const px = p.x || 100;
       const py = p.y || 100;
@@ -318,13 +322,13 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
 
       if (modoVista === 'preview') {
         if (esPreviewSel) {
-          ctx.fillStyle = 'rgba(16, 185, 129, 0.75)'; // Verde brillante selección fan
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.75)'; // Verde brillante: Selección
           ctx.strokeStyle = '#10b981';
           ctx.lineWidth = 3;
         } else {
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.04)'; // Transparente overlay fan
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.04)'; // Transparente: Disponible
           ctx.strokeStyle = colorPalco;
-          ctx.lineWidth = 1.5;
+          ctx.lineWidth = 1.8;
         }
       } else {
         ctx.fillStyle = esSel ? `${colorPalco}66` : `${colorPalco}26`;
@@ -335,17 +339,13 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       ctx.fill();
       ctx.stroke();
 
-      // Rótulo del Palco
+      // EN EL MAPA SALE ÚNICAMENTE EL NÚMERO
       ctx.fillStyle = modoVista === 'preview' && esPreviewSel ? '#ffffff' : colorPalco;
-      ctx.font = 'bold 11px system-ui, sans-serif';
+      ctx.font = 'bold 22px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      const rotulo = p.numero ? `${p.nombre} #${p.numero}` : p.nombre;
-      ctx.fillText(rotulo, px + pw / 2, py + 20);
-
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 9px monospace';
-      const precioMostrar = p.tarifas?.etapa3Full || p.precioPalcoBase;
-      ctx.fillText(`${p.capacidad}p | ${precioMostrar} ${evento.moneda}`, px + pw / 2, py + ph - 14);
+      ctx.textBaseline = 'middle';
+      const numeroMostrar = p.numero || p.id.replace(/\D/g, '') || '1';
+      ctx.fillText(numeroMostrar, px + pw / 2, py + ph / 2);
       ctx.restore();
 
       if (modoVista === 'editor' && esSel) {
@@ -353,7 +353,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       }
     });
 
-    // 5. Renderizar Mesas
+    // 5. Renderizar Mesas (SOLO EL NÚMERO CENTRADO)
     mesas.forEach((m) => {
       const mx = m.x || 300;
       const my = m.y || 300;
@@ -379,7 +379,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
         } else {
           ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
           ctx.strokeStyle = colorMesa;
-          ctx.lineWidth = 1.5;
+          ctx.lineWidth = 1.8;
         }
       } else {
         ctx.fillStyle = esSel ? `${colorMesa}66` : `${colorMesa}26`;
@@ -390,10 +390,13 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       ctx.fill();
       ctx.stroke();
 
+      // EN EL MAPA SALE ÚNICAMENTE EL NÚMERO
       ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 9px system-ui, sans-serif';
+      ctx.font = 'bold 18px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(m.numero ? `${m.nombre} #${m.numero}` : m.nombre, mx + mw / 2, my + mh / 2 + 3);
+      ctx.textBaseline = 'middle';
+      const numeroMesa = m.numero || m.id.replace(/\D/g, '') || '1';
+      ctx.fillText(numeroMesa, mx + mw / 2, my + mh / 2);
       ctx.restore();
 
       if (modoVista === 'editor' && esSel) {
@@ -436,18 +439,16 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     evento.moneda,
   ]);
 
-  // Dibujar los 8 puntos de control de redimensionamiento estilo Elementor
+  // Dibujar puntos de ancla de redimensionamiento estilo Elementor
   const dibujarHandles = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) => {
     const handles = getHandles(x, y, w, h);
-    const size = 8 / zoom;
+    const size = 9 / zoom;
 
-    // Marco exterior de selección
     ctx.save();
     ctx.strokeStyle = '#38bdf8';
     ctx.lineWidth = 1.5 / zoom;
     ctx.strokeRect(x, y, w, h);
 
-    // Puntos de ancla en las esquinas y centros
     ctx.fillStyle = '#ffffff';
     ctx.strokeStyle = '#0284c7';
     ctx.lineWidth = 1.5 / zoom;
@@ -464,7 +465,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     renderizar();
   }, [renderizar]);
 
-  // Detección de colisión con los puntos de ancla de redimensionamiento
+  // Detección de colisión con los 8 puntos de control
   const detectarPuntoControl = (
     mx: number,
     my: number,
@@ -474,7 +475,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     h: number
   ): PuntoControl | null => {
     const handles = getHandles(x, y, w, h);
-    const tolerance = 10 / zoom;
+    const tolerance = 12 / zoom;
 
     for (const [key, pos] of Object.entries(handles) as [PuntoControl, { x: number; y: number }][]) {
       if (Math.abs(mx - pos.x) <= tolerance && Math.abs(my - pos.y) <= tolerance) {
@@ -484,11 +485,11 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
     return null;
   };
 
-  // Eventos del Ratón
+  // Eventos de Ratón sincronizados
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const { x, y } = toVirtualCoords(e.clientX, e.clientY);
 
-    // Modo Previsualizador Fan (simulación de compra de entradas)
+    // Modo Previsualizador Fan (prueba de selección 1:1)
     if (modoVista === 'preview') {
       for (const p of [...palcos].reverse()) {
         const px = p.x || 0;
@@ -513,22 +514,23 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       return;
     }
 
-    // Modo Pan (Desplazamiento)
+    // Modo Pan (Desplazamiento del lienzo)
     if (herramienta === 'pan' || e.button === 1) {
       isDraggingRef.current = true;
       dragModeRef.current = null;
-      dragStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+      const { x: cx, y: cy } = getCanvasMousePos(e.clientX, e.clientY);
+      dragStartRef.current = { x: cx - pan.x, y: cy - pan.y };
       return;
     }
 
-    // Modo Dibujo
+    // Modo Dibujo Directo
     if (['dibujar_palco', 'dibujar_zona', 'dibujar_mesa'].includes(herramienta)) {
       drawingBoxRef.current = { startX: x, startY: y, currentX: x, currentY: y };
       renderizar();
       return;
     }
 
-    // Comprobar si se hace clic en un punto de ancla del elemento actualmente seleccionado
+    // Comprobar si se hace clic en un punto de ancla del elemento seleccionado
     if (elementoSel) {
       let b = { x: 0, y: 0, w: 0, h: 0 };
       if (elementoSel.tipo === 'palco') {
@@ -553,7 +555,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
       }
     }
 
-    // Detección de selección de elementos (Palcos, Zonas, Mesas)
+    // Detección de selección de elementos
     for (const p of [...palcos].reverse()) {
       const px = p.x || 0;
       const py = p.y || 0;
@@ -597,9 +599,10 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (herramienta === 'pan' && isDraggingRef.current) {
+      const { x: cx, y: cy } = getCanvasMousePos(e.clientX, e.clientY);
       setPan({
-        x: e.clientX - dragStartRef.current.x,
-        y: e.clientY - dragStartRef.current.y,
+        x: cx - dragStartRef.current.x,
+        y: cy - dragStartRef.current.y,
       });
       return;
     }
@@ -826,7 +829,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
 
       setPalcos((prev) => [...prev, ...nuevosPalcos]);
       setModalCsvAbierto(false);
-      notificar(`¡Importación masiva completada! ${nuevosPalcos.length} palcos generados en cuadrícula.`);
+      notificar(`¡Importación completada! ${nuevosPalcos.length} palcos generados en cuadrícula.`);
     };
     reader.readAsText(file);
   };
@@ -861,7 +864,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
         zonasDePie,
       });
       setGuardadoExito(true);
-      notificar('¡Mapa guardado y publicado en producción!');
+      notificar('¡Mapa guardado y publicado con éxito!');
       setTimeout(() => setGuardadoExito(false), 3000);
     } finally {
       setGuardando(false);
@@ -898,14 +901,14 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
           </button>
         </div>
 
-        {/* Switcher Estilo Elementor: [ ✏️ Editor ] vs [ 👁️ Previsualizador Taquilla ] */}
+        {/* Switcher Estilo Elementor: [ ✏️ Modo Edición ] vs [ 👁️ Previsualizador Taquilla ] */}
         <div className="flex items-center bg-slate-900 border border-white/10 rounded-2xl p-1">
           <button
             onClick={() => {
               setModoVista('editor');
               setPreviewSeleccionados([]);
             }}
-            className={`px-4 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+            className={`px-4 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
               modoVista === 'editor'
                 ? 'bg-indigo-600 text-white shadow-md'
                 : 'text-slate-400 hover:text-white'
@@ -916,7 +919,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
           </button>
           <button
             onClick={() => setModoVista('preview')}
-            className={`px-4 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+            className={`px-4 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
               modoVista === 'preview'
                 ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-black shadow-md'
                 : 'text-slate-400 hover:text-white'
@@ -963,7 +966,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
             <div className="flex flex-wrap gap-1 pb-3 border-b border-white/10">
               <button
                 onClick={() => setTabSidebar('elementos')}
-                className={`flex-1 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 ${
+                className={`flex-1 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
                   tabSidebar === 'elementos' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -972,7 +975,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
               </button>
               <button
                 onClick={() => setTabSidebar('fondo')}
-                className={`flex-1 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 ${
+                className={`flex-1 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
                   tabSidebar === 'fondo' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -981,7 +984,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
               </button>
               <button
                 onClick={() => setTabSidebar('tarifas')}
-                className={`flex-1 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 ${
+                className={`flex-1 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
                   tabSidebar === 'tarifas' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -1054,7 +1057,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
                     >
                       <div className="flex items-center gap-2">
                         <span className="w-3 h-3 rounded-full" style={{ backgroundColor: p.color || '#eab308' }}></span>
-                        <span className="font-bold">{p.nombre} #{p.numero}</span>
+                        <span className="font-bold">Palco #{p.numero || p.id}</span>
                       </div>
                       <span className="font-mono text-emerald-400">{p.precioPalcoBase} {evento.moneda}</span>
                     </div>
@@ -1149,13 +1152,13 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
                         setBgPos({ x: 0, y: 0 });
                         setBgSize({ w: 1600, h: 1000 });
                       }}
-                      className="flex-1 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold transition"
+                      className="flex-1 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold transition cursor-pointer"
                     >
                       Ajustar a 1600×1000
                     </button>
                     <button
                       onClick={() => setImagenFondo('')}
-                      className="px-3 py-1.5 rounded-xl bg-rose-500/10 text-rose-300 text-xs font-bold hover:bg-rose-500/20 transition"
+                      className="px-3 py-1.5 rounded-xl bg-rose-500/10 text-rose-300 text-xs font-bold hover:bg-rose-500/20 transition cursor-pointer"
                     >
                       Quitar Imagen
                     </button>
@@ -1359,23 +1362,51 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
             )}
           </div>
 
-          {/* INSPECTOR DE PROPIEDADES DIRECTAS */}
+          {/* INSPECTOR DE PROPIEDADES DIRECTAS (CONTROL Y BOLETA) */}
           {elementoSel && palcoActivo && (
             <div className="glass-panel rounded-3xl p-4 border border-amber-500/30 space-y-3 bg-slate-950/80">
               <div className="flex justify-between items-center border-b border-white/10 pb-2">
                 <span className="text-xs font-bold text-amber-300 uppercase flex items-center gap-1.5">
-                  <Settings2 className="w-4 h-4" /> Dimensiones Palco #{palcoActivo.numero}
+                  <Settings2 className="w-4 h-4" /> Control & Boleta: Palco #{palcoActivo.numero}
                 </span>
                 <button
                   onClick={() => {
                     setPalcos(palcos.filter((p) => p.id !== palcoActivo.id));
                     setElementoSel(null);
                   }}
-                  className="text-rose-400 hover:bg-rose-500/10 p-1 rounded-lg"
+                  className="text-rose-400 hover:bg-rose-500/10 p-1 rounded-lg cursor-pointer"
                   title="Eliminar Palco"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
+              </div>
+
+              {/* Nombre de control interno (Sale en la boleta) */}
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Nombre Categoría (Para Boleta y Control):</label>
+                <input
+                  type="text"
+                  value={palcoActivo.nombre}
+                  onChange={(e) =>
+                    setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, nombre: e.target.value } : p)))
+                  }
+                  className="w-full bg-slate-900 border border-white/10 rounded-xl p-2 text-white font-bold"
+                  placeholder="Ej. Palco Diamante VIP"
+                />
+              </div>
+
+              {/* Número que sale en el mapa */}
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Número de Palco (Sale en el Mapa):</label>
+                <input
+                  type="text"
+                  value={palcoActivo.numero || ''}
+                  onChange={(e) =>
+                    setPalcos(palcos.map((p) => (p.id === palcoActivo.id ? { ...p, numero: e.target.value } : p)))
+                  }
+                  className="w-full bg-slate-900 border border-amber-500/40 rounded-xl p-2 text-amber-300 font-bold font-mono text-sm"
+                  placeholder="Ej. 1"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-2 text-xs">
@@ -1431,35 +1462,35 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
               <div className="flex items-center gap-2">
                 <span className={`w-2.5 h-2.5 rounded-full ${modoVista === 'preview' ? 'bg-emerald-400 animate-pulse' : 'bg-indigo-400'}`}></span>
                 <span className="text-white font-bold">
-                  {modoVista === 'preview' ? 'Vista Previa Fan en Tiempo Real' : 'Lienzo de Diseño Arquitectónico'}
+                  {modoVista === 'preview' ? 'Previsualizador Fan en Vivo (Prueba de Selección)' : 'Lienzo de Diseño Arquitectónico'}
                 </span>
               </div>
 
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setHerramienta('seleccionar')}
-                  className={`p-1.5 rounded-lg ${herramienta === 'seleccionar' ? 'bg-indigo-600 text-white' : 'hover:bg-white/5'}`}
+                  className={`p-1.5 rounded-lg cursor-pointer ${herramienta === 'seleccionar' ? 'bg-indigo-600 text-white' : 'hover:bg-white/5'}`}
                   title="Cursor Selección"
                 >
                   <MousePointer className="w-3.5 h-3.5" />
                 </button>
                 <button
                   onClick={() => setHerramienta('pan')}
-                  className={`p-1.5 rounded-lg ${herramienta === 'pan' ? 'bg-indigo-600 text-white' : 'hover:bg-white/5'}`}
+                  className={`p-1.5 rounded-lg cursor-pointer ${herramienta === 'pan' ? 'bg-indigo-600 text-white' : 'hover:bg-white/5'}`}
                   title="Mano para Desplazar"
                 >
                   <Hand className="w-3.5 h-3.5" />
                 </button>
                 <button
                   onClick={() => setZoom((z) => Math.max(0.3, Number((z - 0.15).toFixed(2))))}
-                  className="p-1.5 hover:bg-white/5 rounded-lg"
+                  className="p-1.5 hover:bg-white/5 rounded-lg cursor-pointer"
                 >
                   <ZoomOut className="w-3.5 h-3.5" />
                 </button>
                 <span className="font-mono text-[11px] text-white">{Math.round(zoom * 100)}%</span>
                 <button
                   onClick={() => setZoom((z) => Math.min(3.0, Number((z + 0.15).toFixed(2))))}
-                  className="p-1.5 hover:bg-white/5 rounded-lg"
+                  className="p-1.5 hover:bg-white/5 rounded-lg cursor-pointer"
                 >
                   <ZoomIn className="w-3.5 h-3.5" />
                 </button>
@@ -1468,7 +1499,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
                     setZoom(1);
                     setPan({ x: 0, y: 0 });
                   }}
-                  className="p-1.5 hover:bg-white/5 rounded-lg"
+                  className="p-1.5 hover:bg-white/5 rounded-lg cursor-pointer"
                   title="Restablecer"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
@@ -1490,7 +1521,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
             />
 
             <div className="w-full flex justify-between items-center text-[10px] text-slate-500 pt-2 px-2">
-              <span>Resolución Nativa: 1600×1000 px | Arrastra los puntos de las esquinas para cambiar el tamaño</span>
+              <span>Resolución Nativa: 1600×1000 px | Arrastra las esquinas de cualquier palco para cambiar su tamaño</span>
               <span className="font-mono text-slate-400">Total Palcos: {palcos.length}</span>
             </div>
           </div>
@@ -1506,7 +1537,7 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
                 <FileSpreadsheet className="w-5 h-5 text-indigo-400" />
                 <h3 className="text-base font-bold text-white">Importador Masivo de Archivos Planos</h3>
               </div>
-              <button onClick={() => setModalCsvAbierto(false)} className="text-slate-400 hover:text-white">
+              <button onClick={() => setModalCsvAbierto(false)} className="text-slate-400 hover:text-white cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -1527,14 +1558,14 @@ export const SeatMapStudio: React.FC<SeatMapStudioProps> = ({
             <div className="flex justify-between items-center pt-2">
               <button
                 onClick={handleDescargarPlantilla}
-                className="text-xs text-indigo-400 hover:text-indigo-300 underline flex items-center gap-1"
+                className="text-xs text-indigo-400 hover:text-indigo-300 underline flex items-center gap-1 cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>Descargar archivo de ejemplo (.csv)</span>
               </button>
               <button
                 onClick={() => setModalCsvAbierto(false)}
-                className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition"
+                className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition cursor-pointer"
               >
                 Cerrar
               </button>
