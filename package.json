@@ -1,7 +1,7 @@
 {
   "name": "bioticketseuropa",
   "private": true,
-  "version": "5.0.0",
+  "version": "5.1.0",
   "type": "module",
   "main": "server.js",
   "scripts": {
@@ -24,6 +24,7 @@
     "qrcode.react": "^4.2.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
+    "react-is": "^19.0.0",
     "recharts": "^3.10.1",
     "tailwindcss": "^4.3.3",
     "vite": "^8.3.0"
